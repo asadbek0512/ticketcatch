@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     # --- Runtime ---
     db_path: str = "data/ticketcatch.sqlite"
     currency: str = "usd"
+    # Point of sale: airfares differ by the country you buy from, so this is where the traveller
+    # buys (Korea), not where the server runs.
+    market: str = "kr"
     poll_interval_seconds: int = 28800  # 8h — three times a day
     top_n: int = 3  # how many cheapest options to show per watch
     dry_run: bool = True  # True = log the digest, never send to Telegram

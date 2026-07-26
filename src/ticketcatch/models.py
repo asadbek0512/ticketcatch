@@ -31,7 +31,7 @@ class PriceQuote(SQLModel, table=True):
 
     pk: int | None = Field(default=None, primary_key=True)
     route_key: str = Field(index=True)  # models.route_key(...) — user-independent
-    source: str = ""  # google | aviasales
+    source: str = ""  # kiwi | google
     price: int = 0
     currency: str = "usd"
     airline: str = ""
@@ -40,4 +40,5 @@ class PriceQuote(SQLModel, table=True):
     deep_link: str = ""
     stops: int | None = None  # 0 = nonstop
     duration_min: int | None = None
+    bags: int | None = None  # checked bags included in the price
     captured_at: datetime = Field(default_factory=utcnow, index=True)

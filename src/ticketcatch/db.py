@@ -19,7 +19,7 @@ _session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commi
 
 # Columns added after the first release. create_all() only creates missing *tables*, so an
 # existing pricequote table needs them bolted on by hand.
-_ADDED_COLUMNS = {"stops": "INTEGER", "duration_min": "INTEGER"}
+_ADDED_COLUMNS = {"stops": "INTEGER", "duration_min": "INTEGER", "bags": "INTEGER"}
 
 
 async def init_db() -> None:

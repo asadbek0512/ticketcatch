@@ -31,12 +31,21 @@ def _duration(q: PriceQuote) -> str:
     return f"{hours}s {minutes:02d}d" if minutes else f"{hours}s"
 
 
+def _bags(q: PriceQuote) -> str:
+    """Whether the fare already covers a checked bag — the usual reason a price 'changes' later."""
+    if q.bags is None:
+        return ""
+    return f"🧳 {q.bags} ta" if q.bags else "🧳 yo'q"
+
+
 def _line(index: int, q: PriceQuote) -> str:
     """One booking-board row: price first (that's what's being compared), then who and how."""
     price = _money(q)
     if q.deep_link:
         price = f'<a href="{_e(q.deep_link)}">{price}</a>'
-    detail = " · ".join(x for x in (q.depart_at, _duration(q), _stops(q), q.flight_number) if x)
+    detail = " · ".join(
+        x for x in (q.depart_at, _duration(q), _stops(q), _bags(q), q.flight_number) if x
+    )
     who = _e(q.airline) or "—"
     return f"{index}. <b>{price}</b> — {who}\n     <i>{_e(detail)}</i>" if detail else (
         f"{index}. <b>{price}</b> — {who}"

@@ -50,6 +50,7 @@ def _to_quote_rows(rkey: str, offers: list[Quote], captured_at: datetime) -> lis
             deep_link=o.deep_link,
             stops=o.stops,
             duration_min=o.duration_min,
+            bags=o.bags,
             captured_at=captured_at,
         )
         for o in offers

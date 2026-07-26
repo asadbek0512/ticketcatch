@@ -32,6 +32,7 @@ class Quote:
     deep_link: str = ""
     stops: int | None = None  # 0 = nonstop; None = source doesn't say
     duration_min: int | None = None  # total travel time, minutes
+    bags: int | None = None  # checked bags the price already includes
 
 
 # IATA code -> airline name, learned at runtime from whichever source ships a directory
