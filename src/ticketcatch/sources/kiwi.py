@@ -3,7 +3,7 @@ import httpx
 from datetime import date
 
 from ..config import settings
-from . import Quote, SourceError
+from . import Quote, SourceError, learn_airline
 
 SOURCE = "kiwi"
 # Kiwi.com's public search API — the one the website itself calls. Unlike a cached-fare feed it
@@ -104,6 +104,7 @@ def _to_quote(itinerary: dict) -> Quote | None:
     ]
     first = segments[0] if segments else {}
     carrier = first.get("carrier") or {}
+    learn_airline(carrier.get("code"), carrier.get("name"))
     duration_sec = itinerary.get("duration")
 
     return Quote(

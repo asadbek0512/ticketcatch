@@ -37,11 +37,19 @@ class Quote:
 
 # IATA code -> airline name, learned at runtime from whichever source ships a directory
 # (Google does). Sources that only report codes look up names here so "SC" reads "Shandong".
+# Carrier code -> readable name, filled in by whichever sources ship a directory (Google, Kiwi).
+# Sources that only expose a code — or a name in the wrong language, as the Korean Trip.com front
+# does — resolve through here so one shared lookup keeps the digest in one language.
 AIRLINE_NAMES: dict[str, str] = {}
 
 
 def airline_name(code: str) -> str:
-    return AIRLINE_NAMES.get(code.upper(), code)
+    return AIRLINE_NAMES.get(code.upper(), code.upper())
+
+
+def learn_airline(code: str | None, name: str | None) -> None:
+    if code and name and str(code).upper() != str(name).upper():
+        AIRLINE_NAMES.setdefault(str(code).upper(), str(name))
 
 
 class SourceError(RuntimeError):

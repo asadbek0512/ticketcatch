@@ -25,9 +25,11 @@ def _money(q: PriceQuote) -> str:
 
 
 def _stops(q: PriceQuote) -> str:
+    """Nonstop vs connecting is the first thing worth seeing after the price, so it gets a badge
+    on the headline rather than a word buried in the detail line."""
     if q.stops is None:
-        return ""
-    return "to'g'ridan-to'g'ri" if q.stops == 0 else f"{q.stops} transfer"
+        return "❔ transfer noma'lum"
+    return "✈️ to'g'ridan-to'g'ri" if q.stops == 0 else f"🔁 {q.stops} transfer"
 
 
 def _duration(q: PriceQuote) -> str:
@@ -64,12 +66,11 @@ def _line(index: int, q: PriceQuote) -> str:
     if q.deep_link:
         price = f'<a href="{_e(q.deep_link)}">{price}</a>'
     detail = " · ".join(
-        x for x in (q.depart_at, _duration(q), _stops(q), _bags(q), q.flight_number, _source(q)) if x
+        x for x in (q.depart_at, _duration(q), _bags(q), q.flight_number, _source(q)) if x
     )
     who = _e(q.airline) or "—"
-    return f"{index}. <b>{price}</b> — {who}\n     <i>{_e(detail)}</i>" if detail else (
-        f"{index}. <b>{price}</b> — {who}"
-    )
+    head = f"{index}. <b>{price}</b> — {who}  {_stops(q)}"
+    return f"{head}\n     <i>{_e(detail)}</i>" if detail else head
 
 
 def format_digest(watch: Watch, cheapest: list[PriceQuote], previous: PriceQuote | None) -> str:

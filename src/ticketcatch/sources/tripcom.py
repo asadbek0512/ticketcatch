@@ -2,18 +2,26 @@ import re
 from datetime import date
 
 from ..config import settings
-from . import Quote, SourceError
+from . import Quote, SourceError, airline_name
 
 SOURCE = "tripcom"
 # Trip.com has no public API and blocks plain HTTP with an Akamai challenge, so this source drives
 # a real headless browser and reads the rendered result board. It is the one big OTA that answers
 # from our server at all (Skyscanner serves a robot check even in a browser), and it regularly
 # undercuts the others on the same flight.
-HOST = "https://us.trip.com"  # the .us front gives English airline names; curr= still sets the price
+#
+# The regional front matters: Trip.com prices the same seat differently per point of sale, and the
+# ticket is bought from MARKET. On ICN-TAS the .kr front ran ~0.9% under .us and matched what the
+# user sees in their own browser, so the front follows MARKET rather than being pinned to English.
+# The cost is that its airline names come back in the local language — hence _airline() below.
+HOST = "https://{market}.trip.com"
 SEARCH = (
     "{host}/flights/showfarefirst?dcity={origin}&acity={destination}&ddate={depart}"
     "&triptype=ow&class=y&quantity=1&locale=en-US&curr={currency}"
 )
+# Sort tabs are "recommended | nonstop first | cheapest", and the page opens on recommended — which
+# is not the cheapest board. The testid is language-independent; the visible label is not.
+CHEAPEST_TAB = "[data-testid=sort_bar_title_cheapest]"
 UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
@@ -23,9 +31,11 @@ CARD = "div.result-item"
 NAV_TIMEOUT = 60_000
 CARDS_TIMEOUT = 90_000
 SETTLE_MS = 6_000  # prices stream in after the first cards render
-SCROLL_STEPS = 10  # the board lazy-loads; stop early once the count stops growing
-SCROLL_PX = 4_000
-SCROLL_WAIT_MS = 2_000
+RESORT_MS = 6_000  # switching sort tabs re-fetches the board
+SCROLL_STEPS = 14
+SCROLL_PX = 5_000
+SCROLL_WAIT_MS = 1_800
+IDLE_SCROLLS = 3  # the board pauses mid-load, so one flat pass doesn't mean the end
 
 # One pass over the rendered board. Everything read here is a stable data-testid or data-attribute,
 # not a hashed class name — Trip.com re-hashes its CSS classes on every build.
@@ -35,8 +45,10 @@ _EXTRACT = """
   const price = el.querySelector('[data-testid^="flight_price"]');
   return {
     price: price ? price.getAttribute('data-price') : null,
-    airline: Array.from(el.querySelectorAll('[data-testid=flights-name]'))
-      .map(e => e.textContent.trim()).join(', '),
+    // The logo filename is the IATA code — the only carrier identifier on the card that isn't
+    // written in the front's own language.
+    codes: Array.from(el.querySelectorAll('img.logo-img'))
+      .map(e => (e.getAttribute('src') || '').split('/').pop().split('.')[0]),
     times: Array.from(el.querySelectorAll('[data-testid^="flight-time-"]'))
       .map(e => e.getAttribute('data-testid').slice(12)),
     duration: text('[data-testid=flightInfoDuration]'),
@@ -46,8 +58,15 @@ _EXTRACT = """
 })
 """
 
-_DURATION = re.compile(r"(?:(\d+)h)?\s*(?:(\d+)m)?")
-_STOPS = re.compile(r"^(\d+)\s+stops?")
+# The regional front writes its labels in the local language and ignores every locale override we
+# tried, so the two numeric fields are read in whichever language they arrive: "7h 40m" / "7시간 40분",
+# "Nonstop" / "직항", "2 stops in …" / "2회 경유". A stop count with no digits ("6h 40m in Beijing",
+# "베이징 경유") is a single stop — hence the anchored patterns, which must not pick up the digits
+# in a layover duration.
+_HOURS = re.compile(r"(\d+)\s*(?:h\b|시간)")
+_MINUTES = re.compile(r"(\d+)\s*(?:m\b|분)")
+_STOP_COUNT = re.compile(r"^(\d+)\s*(?:stops?\b|회)")
+_NONSTOP = ("nonstop", "direct", "직항")
 
 
 async def fetch(origin: str, destination: str, depart: date) -> list[Quote]:
@@ -58,7 +77,7 @@ async def fetch(origin: str, destination: str, depart: date) -> list[Quote]:
         raise SourceError(f"tripcom: playwright not installed ({e})") from e
 
     url = SEARCH.format(
-        host=HOST,
+        host=HOST.format(market=settings.market.lower()),
         origin=origin.lower(),
         destination=destination.lower(),
         depart=depart.isoformat(),
@@ -76,8 +95,12 @@ async def fetch(origin: str, destination: str, depart: date) -> list[Quote]:
             except Exception as e:
                 raise SourceError(f"tripcom: no results rendered for {origin}-{destination}") from e
             await page.wait_for_timeout(SETTLE_MS)
-            await _scroll_to_end(page)
-            rows = await page.evaluate(_EXTRACT)
+            # Both boards, because neither is a superset: "recommended" is the only one carrying
+            # the small direct carriers (Qanot Sharq, Uzbekistan Airways), while "cheapest" surfaces
+            # long multi-stop fares the first board hides. Overlap is dropped by the poller's dedupe.
+            rows = await _harvest(page)
+            if await _sort_by_price(page):
+                rows += await _harvest(page)
         finally:
             await browser.close()
 
@@ -87,14 +110,37 @@ async def fetch(origin: str, destination: str, depart: date) -> list[Quote]:
     return quotes
 
 
+async def _harvest(page) -> list[dict]:
+    await _scroll_to_end(page)
+    return await page.evaluate(_EXTRACT)
+
+
+async def _sort_by_price(page) -> bool:
+    """Switch to the cheapest board. Never fails the source — a missing tab just means one board."""
+    try:
+        tab = page.locator(CHEAPEST_TAB).first
+        if not await tab.count():
+            return False
+        await tab.click()
+        await page.wait_for_timeout(RESORT_MS)
+        return True
+    except Exception:
+        return False
+
+
 async def _scroll_to_end(page) -> None:
-    seen = 0
+    """The board lazy-loads on scroll; stop once the count holds still for a few passes."""
+    seen, idle = 0, 0
     for _ in range(SCROLL_STEPS):
         await page.mouse.wheel(0, SCROLL_PX)
         await page.wait_for_timeout(SCROLL_WAIT_MS)
         count = await page.locator(CARD).count()
         if count == seen:
-            return
+            idle += 1
+            if idle >= IDLE_SCROLLS:
+                return
+        else:
+            idle = 0
         seen = count
 
 
@@ -106,7 +152,7 @@ def _to_quote(row: dict, url: str) -> Quote | None:
         source=SOURCE,
         price=round(float(price)),
         currency=settings.currency.lower(),
-        airline=row.get("airline") or "",
+        airline=_airline(row.get("codes") or []),
         flight_number="",  # the collapsed card doesn't carry it; dedupe falls back to departure time
         depart_at=_stamp((row.get("times") or [None])[0]),
         deep_link=url,  # Trip.com has no per-itinerary link until the card is opened
@@ -116,25 +162,34 @@ def _to_quote(row: dict, url: str) -> Quote | None:
     )
 
 
+def _airline(codes: list[str]) -> str:
+    """Carrier logos in card order -> 'Asiana Airlines, China Eastern'. The names come from the
+    shared directory the other sources fill in, so the digest stays in one language."""
+    seen = list(dict.fromkeys(c for c in codes if c))
+    return ", ".join(airline_name(c) for c in seen)
+
+
 def _stamp(raw: str | None) -> str:
     """'2026-08-15 16:35:00' -> '2026-08-15 16:35' (local time at the departure airport)."""
     return raw[:16] if raw else ""
 
 
 def _stops(raw: str) -> int | None:
-    """'Nonstop' | '3 stops in Beijing, Hangzhou, Xi'an' | '6h 40m in Beijing' (a single stop)."""
-    if not raw:
+    """'Nonstop' | '직항' | '3 stops in Beijing, …' | '2회 경유' | '6h 40m in Beijing' (one stop)."""
+    text = raw.strip()
+    if not text:
         return None
-    if "nonstop" in raw.lower():
+    if any(token in text.lower() for token in _NONSTOP):
         return 0
-    match = _STOPS.match(raw)
+    match = _STOP_COUNT.match(text)
     return int(match.group(1)) if match else 1
 
 
 def _duration(raw: str) -> int | None:
-    """'7h 40m' -> 460."""
-    match = _DURATION.match(raw.strip())
-    if not match or not any(match.groups()):
+    """'7h 40m' | '7시간 40분' -> 460."""
+    hours = _HOURS.search(raw)
+    minutes = _MINUTES.search(raw)
+    if not hours and not minutes:
         return None
-    hours, minutes = match.groups()
-    return int(hours or 0) * 60 + int(minutes or 0)
+    total = (int(hours.group(1)) if hours else 0) * 60 + (int(minutes.group(1)) if minutes else 0)
+    return total or None
