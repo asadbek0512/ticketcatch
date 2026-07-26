@@ -1,0 +1,64 @@
+# TicketCatch
+
+Telegram bot that watches flight prices (ICN ⇄ TAS to start) across multiple sources and sends
+the cheapest options with links **three times a day**, flagging price drops and threshold alerts.
+
+Built on the jobcatch architecture (SQLite + httpx + Telegram + a source registry), but instead of
+"is this posting new?" the core question is **"did the price drop?"**.
+
+## Status
+
+Live. Runs on the OCI server under pm2 (`ticketcatch-bot` + `ticketcatch-poll`), reboot-safe.
+The digest is a real booking board: every airline flying the route that day, cheapest first,
+with departure time, duration, stop count and flight number.
+
+Sources: **Google Flights** (live, airline-by-airline, the real list) and **Aviasales/Travelpayouts**
+(cached cheapest fare + a bookable affiliate link). Duffel is intentionally unused — its free tier
+is test-mode only and returns invented airlines and fares.
+
+## Setup
+
+```bash
+cd "$HOME"                       # macOS: avoid EPERM uv_cwd when the repo is under ~/Desktop
+uv sync                          # or: pip install -e .
+cp .env.example .env             # fill TELEGRAM_BOT_TOKEN + TRAVELPAYOUTS_TOKEN
+```
+
+## Run
+
+```bash
+python -m ticketcatch bot        # run the Telegram bot (user adds watches)
+python -m ticketcatch poll       # one price-check cycle (DRY_RUN logs, doesn't send)
+python -m ticketcatch loop       # continuous — checks every POLL_INTERVAL_SECONDS (8h)
+```
+
+In production the bot and the loop run as two processes (e.g. pm2 on the OCI server).
+
+## Architecture
+
+| File | Role |
+|---|---|
+| `sources/__init__.py` | `fetch_json` helper, `Quote` dataclass, `SourceError` |
+| `sources/googleflights.py` | Google Flights search → every itinerary that day (primary source) |
+| `sources/aviasales.py` | Travelpayouts "prices_for_dates" API → `list[Quote]` |
+| `registry.py` | `SOURCES` map — every registered source is merged and deduped |
+| `models.py` | `Watch` (user request) + `PriceQuote` (price history) |
+| `db.py` | async SQLite, `active_watches`, `last_cheapest` |
+| `poller.py` | group by route → fetch → dedupe (cheapest per flight) → compare → notify → persist |
+| `notifier.py` | Telegram digest card (price-drop badge, threshold alert) |
+| `bot.py` | Aiogram — `/add ICN TAS 2026-08-15 [price]`, `/list`, `/remove` |
+
+## Adding a source
+
+1. Write `sources/aviata.py` with `SOURCE = "aviata"` and
+   `async def fetch(origin, destination, depart) -> list[Quote]`.
+2. Register it in `registry.py`. The poller picks it up automatically and merges its offers.
+
+## Deploy (OCI server)
+
+```bash
+rsync -az --delete --exclude .venv --exclude .git --exclude __pycache__ ./ freeserver:~/ticketcatch/
+ssh freeserver 'cd ~/ticketcatch && ~/.local/bin/uv sync --python 3.11 && pm2 restart ticketcatch-bot ticketcatch-poll'
+```
+
+The server needs Python 3.11 (uv installs it; the system python is 3.10).
