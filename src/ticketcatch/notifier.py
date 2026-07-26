@@ -44,13 +44,22 @@ def _bags(q: PriceQuote) -> str:
     return f"🧳 {q.bags} ta" if q.bags else "🧳 yo'q"
 
 
+# Which site quoted this fare — the whole point is comparing them. "~" marks a cached quote:
+# a price someone saw earlier, which may already be sold out.
+_SOURCE_LABEL = {"kiwi": "Kiwi", "google": "Google", "aviasales": "~Aviasales"}
+
+
+def _source(q: PriceQuote) -> str:
+    return _SOURCE_LABEL.get(q.source, q.source)
+
+
 def _line(index: int, q: PriceQuote) -> str:
     """One booking-board row: price first (that's what's being compared), then who and how."""
     price = _money(q)
     if q.deep_link:
         price = f'<a href="{_e(q.deep_link)}">{price}</a>'
     detail = " · ".join(
-        x for x in (q.depart_at, _duration(q), _stops(q), _bags(q), q.flight_number) if x
+        x for x in (q.depart_at, _duration(q), _stops(q), _bags(q), q.flight_number, _source(q)) if x
     )
     who = _e(q.airline) or "—"
     return f"{index}. <b>{price}</b> — {who}\n     <i>{_e(detail)}</i>" if detail else (
