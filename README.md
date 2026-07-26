@@ -67,7 +67,9 @@ In production the bot and the loop run as two processes (e.g. pm2 on the OCI ser
 ## Deploy (OCI server)
 
 ```bash
-rsync -az --delete --exclude .venv --exclude .git --exclude __pycache__ ./ freeserver:~/ticketcatch/
+# data/ must stay excluded — it holds the live watches and price history, which a local
+# copy would silently overwrite (the DB is data/ticketcatch.sqlite, not *.db).
+rsync -az --delete --exclude .venv --exclude .git --exclude __pycache__ --exclude data ./ freeserver:~/ticketcatch/
 ssh freeserver 'cd ~/ticketcatch && ~/.local/bin/uv sync --python 3.11 && pm2 restart ticketcatch-bot ticketcatch-poll'
 ```
 
