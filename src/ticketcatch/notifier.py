@@ -46,7 +46,12 @@ def _bags(q: PriceQuote) -> str:
 
 # Which site quoted this fare — the whole point is comparing them. "~" marks a cached quote:
 # a price someone saw earlier, which may already be sold out.
-_SOURCE_LABEL = {"kiwi": "Kiwi", "google": "Google", "aviasales": "~Aviasales"}
+_SOURCE_LABEL = {
+    "kiwi": "Kiwi",
+    "google": "Google",
+    "aviasales": "~Aviasales",
+    "tripcom": "Trip.com",
+}
 
 
 def _source(q: PriceQuote) -> str:

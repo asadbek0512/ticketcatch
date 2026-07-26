@@ -12,16 +12,23 @@ Live. Runs on the OCI server under pm2 (`ticketcatch-bot` + `ticketcatch-poll`),
 The digest is a real booking board: every airline flying the route that day, cheapest first,
 with departure time, duration, stop count and flight number.
 
-Sources: **Kiwi.com** (bookable fares priced for `MARKET`, per-itinerary booking link, baggage
-allowance — the primary source) and **Google Flights** (cross-check, covers carriers Kiwi lacks).
-Aviasales is unregistered (its fares are cached and may be gone) and Duffel too (free tier is
-test-mode and returns invented airlines and fares).
+Four sources are polled and merged: **Kiwi.com** (bookable fares priced for `MARKET`, per-itinerary
+booking link, baggage allowance — the primary source), **Google Flights** (covers carriers Kiwi
+lacks), **Trip.com** (OTA board, read with a headless browser — it has no API and blocks plain
+HTTP), and **Aviasales** (cached fares, but often the cheapest quote on a flight the others also
+list). Duffel stays unregistered: its free tier is test-mode and returns invented airlines and
+fares. Skyscanner and Aviata.kz are not reachable — both serve a bot challenge even in a real
+browser.
+
+The same flight quoted by several sites collapses to the cheapest of them, so the board answers
+"who sells this seat for the least".
 
 ## Setup
 
 ```bash
 cd "$HOME"                       # macOS: avoid EPERM uv_cwd when the repo is under ~/Desktop
 uv sync                          # or: pip install -e .
+uv run playwright install chromium   # once — the Trip.com source drives a real browser
 cp .env.example .env             # fill TELEGRAM_BOT_TOKEN (sources need no key)
 ```
 
@@ -42,6 +49,8 @@ In production the bot and the loop run as two processes (e.g. pm2 on the OCI ser
 | `sources/__init__.py` | `fetch_json` helper, `Quote` dataclass, `SourceError` |
 | `sources/kiwi.py` | Kiwi.com GraphQL search → bookable itineraries (primary source) |
 | `sources/googleflights.py` | Google Flights search → every itinerary that day (cross-check) |
+| `sources/tripcom.py` | Trip.com result board, scraped with headless Playwright |
+| `sources/aviasales.py` | Travelpayouts cached fares — cheap quotes, may already be sold |
 | `registry.py` | `SOURCES` map — every registered source is merged and deduped |
 | `models.py` | `Watch` (user request) + `PriceQuote` (price history) |
 | `db.py` | async SQLite, `active_watches`, `last_cheapest` |

@@ -27,10 +27,15 @@ async def _fetch_route(origin: str, destination: str, depart) -> list[Quote]:
 
 def _dedupe(offers: list[Quote]) -> list[Quote]:
     """Sources overlap — the same physical flight can come back from several of them. Keep the
-    cheapest quote per (flight, departure) so the digest reads like a booking board, not a log."""
+    cheapest quote per flight so the digest reads like a booking board, not a log.
+
+    Identity is (departure time, stops) rather than the flight number: sources disagree on the
+    number (codeshares) or omit it entirely, but on one route and day two itineraries almost never
+    leave at the same minute with the same number of stops. That is what makes the comparison work
+    — the same seat quoted by three sites collapses to the cheapest of the three."""
     best: dict[tuple, Quote] = {}
     for o in offers:
-        key = (o.flight_number or o.airline, o.depart_at)
+        key = (o.depart_at, o.stops) if o.depart_at else (o.flight_number or o.airline, None)
         if key not in best or o.price < best[key].price:
             best[key] = o
     return sorted(best.values(), key=lambda o: o.price)
