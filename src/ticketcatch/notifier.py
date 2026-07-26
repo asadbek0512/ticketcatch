@@ -14,8 +14,14 @@ def _e(s: str) -> str:
     return html.escape(s or "")
 
 
+# Currencies with no minor unit run into six digits, so they need thousands separators to stay
+# readable at a glance; USD-sized numbers don't.
+_GROUPED = {"krw", "uzs", "jpy", "vnd", "idr"}
+
+
 def _money(q: PriceQuote) -> str:
-    return f"{q.price} {q.currency.upper()}"
+    amount = f"{q.price:,}" if q.currency.lower() in _GROUPED else str(q.price)
+    return f"{amount} {q.currency.upper()}"
 
 
 def _stops(q: PriceQuote) -> str:

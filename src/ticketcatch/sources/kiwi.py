@@ -12,7 +12,7 @@ SOURCE = "kiwi"
 API = "https://api.skypicker.com/umbrella/v2/graphql"
 BOOKING_HOST = "https://www.kiwi.com"
 TIMEOUT = 60
-LIMIT = 30
+LIMIT = 60  # the whole board for a day; the poller keeps only the cheapest TOP_N
 STATION = "Station:airport:{}"
 
 QUERY = """

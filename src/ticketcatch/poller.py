@@ -84,7 +84,7 @@ async def poll_once() -> dict:
         cheapest = _to_quote_rows(rkey, offers[: settings.top_n], captured_at)
 
         async with get_session() as s:
-            previous = await last_cheapest(s, rkey)
+            previous = await last_cheapest(s, rkey, settings.currency.lower())
             for row in cheapest:  # persist the new snapshot as price history
                 s.add(row)
             await s.commit()

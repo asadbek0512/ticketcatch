@@ -20,7 +20,7 @@ class Settings(BaseSettings):
 
     # --- Runtime ---
     db_path: str = "data/ticketcatch.sqlite"
-    currency: str = "usd"
+    currency: str = "krw"
     # Point of sale: airfares differ by the country you buy from, so this is where the traveller
     # buys (Korea), not where the server runs.
     market: str = "kr"
