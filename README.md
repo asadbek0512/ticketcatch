@@ -12,16 +12,17 @@ Live. Runs on the OCI server under pm2 (`ticketcatch-bot` + `ticketcatch-poll`),
 The digest is a real booking board: every airline flying the route that day, cheapest first,
 with departure time, duration, stop count and flight number.
 
-Sources: **Google Flights** (live, airline-by-airline, the real list) and **Aviasales/Travelpayouts**
-(cached cheapest fare + a bookable affiliate link). Duffel is intentionally unused — its free tier
-is test-mode only and returns invented airlines and fares.
+Sources: **Kiwi.com** (bookable fares priced for `MARKET`, per-itinerary booking link, baggage
+allowance — the primary source) and **Google Flights** (cross-check, covers carriers Kiwi lacks).
+Aviasales is unregistered (its fares are cached and may be gone) and Duffel too (free tier is
+test-mode and returns invented airlines and fares).
 
 ## Setup
 
 ```bash
 cd "$HOME"                       # macOS: avoid EPERM uv_cwd when the repo is under ~/Desktop
 uv sync                          # or: pip install -e .
-cp .env.example .env             # fill TELEGRAM_BOT_TOKEN + TRAVELPAYOUTS_TOKEN
+cp .env.example .env             # fill TELEGRAM_BOT_TOKEN (sources need no key)
 ```
 
 ## Run
@@ -39,8 +40,8 @@ In production the bot and the loop run as two processes (e.g. pm2 on the OCI ser
 | File | Role |
 |---|---|
 | `sources/__init__.py` | `fetch_json` helper, `Quote` dataclass, `SourceError` |
-| `sources/googleflights.py` | Google Flights search → every itinerary that day (primary source) |
-| `sources/aviasales.py` | Travelpayouts "prices_for_dates" API → `list[Quote]` |
+| `sources/kiwi.py` | Kiwi.com GraphQL search → bookable itineraries (primary source) |
+| `sources/googleflights.py` | Google Flights search → every itinerary that day (cross-check) |
 | `registry.py` | `SOURCES` map — every registered source is merged and deduped |
 | `models.py` | `Watch` (user request) + `PriceQuote` (price history) |
 | `db.py` | async SQLite, `active_watches`, `last_cheapest` |
