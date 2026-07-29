@@ -240,21 +240,75 @@ def result_keyboard(lang: str) -> InlineKeyboardMarkup:
 
 
 def watches_keyboard(watches: list[Watch], lang: str) -> InlineKeyboardMarkup:
-    """Each watch carries its own delete button — nobody should have to retype an id from a list."""
+    """One button per watch, opening it. The list used to delete on tap, which put the destructive
+    action where the curious one belongs — and left history, alerts and pausing unreachable."""
     rows = [
         [
             InlineKeyboardButton(
                 text=(
-                    f"🗑 {w.origin}→{w.destination} · {w.depart_date.isoformat()}"
+                    f"{'⏸' if w.paused else '🔔'} {w.origin}→{w.destination}"
+                    f" · {w.depart_date.isoformat()}"
                     + (f" 🔁 {w.return_date.isoformat()}" if w.return_date else "")
                 ),
-                callback_data=f"del:{w.pk}",
+                callback_data=f"w:{w.pk}",
             )
         ]
         for w in watches
     ]
     rows.append(_back(lang))
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def watch_keyboard(watch: Watch, lang: str) -> InlineKeyboardMarkup:
+    """Everything you can do to one watch. Delete sits alone on the last row, away from the taps
+    people make while browsing."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=t(lang, "btn_history"), callback_data=f"hist:{watch.pk}"),
+                InlineKeyboardButton(text=t(lang, "btn_threshold"), callback_data=f"thr:{watch.pk}"),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=t(lang, "btn_resume" if watch.paused else "btn_pause"),
+                    callback_data=f"pause:{watch.pk}",
+                )
+            ],
+            [InlineKeyboardButton(text=t(lang, "btn_delete"), callback_data=f"del:{watch.pk}")],
+            _back(lang, "mine"),
+        ]
+    )
+
+
+def threshold_keyboard(
+    pk: int, options: list[int], currency: str, has_current: bool, lang: str
+) -> InlineKeyboardMarkup:
+    """Alert prices offered as buttons. The numbers come from what the route has actually cost, so
+    they are choices rather than a blank field the user has to guess at."""
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"🔥 < {money.format_price(price, currency)}",
+                callback_data=f"setthr:{pk}:{price}",
+            )
+        ]
+        for price in options
+    ]
+    if has_current:
+        rows.append(
+            [InlineKeyboardButton(text=t(lang, "btn_thr_off"), callback_data=f"setthr:{pk}:0")]
+        )
+    rows.append(_back(lang, f"w:{pk}"))
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def history_keyboard(pk: int, lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=t(lang, "btn_refresh"), callback_data=f"hist:{pk}")],
+            _back(lang, f"w:{pk}"),
+        ]
+    )
 
 
 # --- settings ----------------------------------------------------------------------------------

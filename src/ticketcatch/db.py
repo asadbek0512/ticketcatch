@@ -2,7 +2,7 @@ import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import asdict, fields
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from sqlalchemy import delete, func
@@ -38,6 +38,7 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "market": f"TEXT DEFAULT '{settings.market.lower()}'",
         "lang": f"TEXT DEFAULT '{settings.default_lang}'",
         "return_date": "DATE",
+        "paused": "BOOLEAN DEFAULT 0",
     },
     "preference": {
         "lang": f"TEXT DEFAULT '{settings.default_lang}'",
@@ -122,7 +123,11 @@ async def store_offers(session: AsyncSession, key: str, offers: list[Quote]) -> 
 
 
 async def active_watches(session: AsyncSession) -> list[Watch]:
-    rows = await session.exec(select(Watch).where(Watch.active == True))  # noqa: E712
+    """What the poller should price now. A paused watch still exists and still owns its history —
+    it just costs nothing and sends nothing until the user resumes it."""
+    rows = await session.exec(
+        select(Watch).where(Watch.active == True, Watch.paused == False)  # noqa: E712
+    )
     return list(rows.all())
 
 
@@ -149,6 +154,28 @@ async def counts(session: AsyncSession) -> dict[str, int]:
         "quotes": quotes.first() or 0,
         "searches": searches.first() or 0,
     }
+
+
+async def price_history(
+    session: AsyncSession, route_key: str, currency: str, limit: int = 30
+) -> list[tuple[datetime, int]]:
+    """The cheapest price at each capture, oldest first — "is this route getting dearer?".
+
+    One row per batch, not per quote: the poller stamps every row of a cycle with the same
+    captured_at, so grouping by it turns the quote table back into the sequence of moments we
+    looked. Only `currency` batches count, for the same reason last_cheapest filters on it — a
+    KRW price next to a USD one is a graph of the settings screen, not of the fare.
+
+    The newest `limit` batches are read and then reversed, so a long-lived watch shows its recent
+    trend rather than its first month."""
+    rows = await session.exec(
+        select(PriceQuote.captured_at, func.min(PriceQuote.price))
+        .where(PriceQuote.route_key == route_key, PriceQuote.currency == currency)
+        .group_by(PriceQuote.captured_at)
+        .order_by(desc(PriceQuote.captured_at))
+        .limit(limit)
+    )
+    return [(at, int(price)) for at, price in reversed(list(rows.all()))]
 
 
 async def last_cheapest(session: AsyncSession, route_key: str, currency: str) -> PriceQuote | None:

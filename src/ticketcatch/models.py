@@ -49,7 +49,10 @@ class Watch(SQLModel, table=True):
     # outbound flown one way — never fold the two together.
     return_date: date | None = Field(default=None, index=True)
     threshold_price: int | None = None  # fire a special alert when the cheapest drops below this
-    active: bool = Field(default=True, index=True)
+    active: bool = Field(default=True, index=True)  # False = deleted; the row stays for history
+    # Paused keeps the watch and its price history but stops the polling. Deleting to "stop the
+    # messages for a while" would throw away the very history that makes "↓ cheaper" meaningful.
+    paused: bool = Field(default=False, index=True)
     created_at: datetime = Field(default_factory=utcnow)
     # Copied off the user's Preference when the watch is created, not read live: the alert
     # "↓ 40,000 KRW cheaper" only means anything if every capture of this watch is priced the

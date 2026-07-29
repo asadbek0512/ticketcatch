@@ -48,6 +48,11 @@ UZ: dict[str, str] = {
         "/help — shu yordam\n\n"
         "🔁 Borish-qaytish uchun panelda <b>🔁 Qaytish qo'shish</b> tugmasini bosing — "
         "ikki yo'nalish birga narxlanadi, alohida ikki chipta emas.\n\n"
+        "<b>Kuzatuvni ochsangiz</b> (/list → yo'nalish ustiga bosing):\n"
+        "📉 <b>Narx tarixi</b> — narx ko'tarilyaptimi yoki tushyaptimi, grafik bilan. "
+        "Hozir olish kerakmi yoki kutish arziydimi — aytib beraman.\n"
+        "🔥 <b>Narx signali</b> — siz aytgan narxdan pastga tushsa alohida ogohlantiraman.\n"
+        "⏸ <b>Pauza</b> — vaqtincha to'xtatish. Tarix saqlanadi, o'chirmang.\n\n"
         "Tez yo'l: <code>/add ICN TAS 2026-08-15 2026-08-29</code>\n\n"
         "<i>Narxlar saytlardan real vaqtda olinadi, lekin bilet sotib olingunicha "
         "o'zgarishi mumkin — bu kafolat emas, taqqoslash.</i>"
@@ -112,6 +117,37 @@ UZ: dict[str, str] = {
     "watch_list": "📋 <b>Kuzatuvlaringiz:</b>",
     "watch_limit": "Kuzatuvlar chegarasi — {limit} ta. Avval eskisini o'chiring: /list",
     "watch_unknown": "Bunday kuzatuv topilmadi",
+    "watch_open": "Kuzatuvni ko'rish uchun ustiga bosing.",
+    "watch_detail": "🔔 <b>{route}</b>\n{date}\n\n💱 {market} · {currency}\n{status}{threshold}",
+    "status_active": "✅ Kuzatilmoqda — kuniga 3 marta",
+    "status_paused": "⏸ Pauzada — xabar yubormayman",
+    "watch_paused": "⏸ Pauza qilindi. Tarix saqlanadi.",
+    "watch_resumed": "▶️ Yana kuzatilmoqda",
+    "thr_line": "\n🔥 Signal: {price} dan past bo'lsa",
+    "thr_ask": (
+        "🔥 <b>Narx signali</b>\n\nNarx qaysi darajadan pastga tushsa, alohida ogohlantiraman?\n"
+        "Tugmani bosing yoki raqam yozing (masalan <code>750000</code>)."
+    ),
+    "thr_set": "🔥 Signal o'rnatildi: {price} dan past",
+    "thr_cleared": "Signal o'chirildi",
+    "thr_bad": "Faqat raqam yozing, masalan <code>750000</code>",
+    "btn_thr_off": "✖️ Signalni o'chirish",
+    "btn_history": "📉 Narx tarixi",
+    "btn_threshold": "🔥 Narx signali",
+    "btn_pause": "⏸ Pauza",
+    "btn_resume": "▶️ Davom etish",
+    "btn_delete": "🗑 O'chirish",
+    "hist_title": "📉 <b>Narx tarixi</b>",
+    "hist_thin": (
+        "Hali tarix yetarli emas — kamida ikki marta tekshirilishi kerak.\n"
+        "Kuniga 3 marta tekshiraman, ertaga grafik paydo bo'ladi."
+    ),
+    "hist_now": "Hozir: <b>{price}</b>",
+    "hist_range": "Eng arzon: {low} · eng qimmat: {high}",
+    "hist_flat": "➖ Narx deyarli o'zgarmayapti — kutishning ma'nosi yo'q.",
+    "hist_low": "🟢 Hozir eng arzon davri — olish payti.",
+    "hist_high": "🔴 Eng arzonidan {percent}% qimmat — kutib turish arziydi.",
+    "hist_mid": "🟡 Eng arzonidan {percent}% qimmat — o'rta daraja.",
     "remove_format": "Format: <code>/remove 3</code> — raqamni /list dan oling",
     "add_format": "Format: <code>/add ICN TAS 2026-08-15 [qaytish] [narx]</code>",
     "add_ok": "✅ Kuzatuv qo'shildi: <b>{route}</b> · {date}{extra}",
@@ -171,6 +207,11 @@ RU: dict[str, str] = {
         "/help — эта справка\n\n"
         "🔁 Для «туда-обратно» нажмите <b>🔁 Добавить обратно</b> в панели — оба плеча "
         "считаются вместе, а не как два отдельных билета.\n\n"
+        "<b>Откройте маршрут</b> (/list → нажмите на него):\n"
+        "📉 <b>История цены</b> — график: дорожает или дешевеет. Скажу, брать сейчас "
+        "или подождать.\n"
+        "🔥 <b>Сигнал по цене</b> — предупрежу отдельно, когда упадёт ниже вашей суммы.\n"
+        "⏸ <b>Пауза</b> — временно остановить. История сохраняется, не удаляйте.\n\n"
         "Быстро: <code>/add ICN TAS 2026-08-15 2026-08-29</code>\n\n"
         "<i>Цены берутся с сайтов в реальном времени, но могут измениться до покупки — "
         "это сравнение, а не гарантия.</i>"
@@ -231,6 +272,37 @@ RU: dict[str, str] = {
     "watch_list": "📋 <b>Ваши маршруты:</b>",
     "watch_limit": "Лимит маршрутов — {limit}. Сначала удалите старый: /list",
     "watch_unknown": "Такой маршрут не найден",
+    "watch_open": "Нажмите на маршрут, чтобы открыть его.",
+    "watch_detail": "🔔 <b>{route}</b>\n{date}\n\n💱 {market} · {currency}\n{status}{threshold}",
+    "status_active": "✅ Отслеживается — 3 раза в день",
+    "status_paused": "⏸ На паузе — сообщений не будет",
+    "watch_paused": "⏸ Поставлено на паузу. История сохранится.",
+    "watch_resumed": "▶️ Снова отслеживается",
+    "thr_line": "\n🔥 Сигнал: ниже {price}",
+    "thr_ask": (
+        "🔥 <b>Сигнал по цене</b>\n\nНиже какой цены предупредить отдельно?\n"
+        "Нажмите кнопку или введите число (например <code>750000</code>)."
+    ),
+    "thr_set": "🔥 Сигнал установлен: ниже {price}",
+    "thr_cleared": "Сигнал отключён",
+    "thr_bad": "Введите только число, например <code>750000</code>",
+    "btn_thr_off": "✖️ Отключить сигнал",
+    "btn_history": "📉 История цены",
+    "btn_threshold": "🔥 Сигнал по цене",
+    "btn_pause": "⏸ Пауза",
+    "btn_resume": "▶️ Продолжить",
+    "btn_delete": "🗑 Удалить",
+    "hist_title": "📉 <b>История цены</b>",
+    "hist_thin": (
+        "Истории пока мало — нужно хотя бы две проверки.\n"
+        "Проверяю 3 раза в день, завтра появится график."
+    ),
+    "hist_now": "Сейчас: <b>{price}</b>",
+    "hist_range": "Минимум: {low} · максимум: {high}",
+    "hist_flat": "➖ Цена почти не меняется — ждать нет смысла.",
+    "hist_low": "🟢 Сейчас самая низкая цена — можно брать.",
+    "hist_high": "🔴 На {percent}% дороже минимума — стоит подождать.",
+    "hist_mid": "🟡 На {percent}% дороже минимума — средний уровень.",
     "remove_format": "Формат: <code>/remove 3</code> — номер возьмите из /list",
     "add_format": "Формат: <code>/add ICN TAS 2026-08-15 [обратно] [цена]</code>",
     "add_ok": "✅ Маршрут добавлен: <b>{route}</b> · {date}{extra}",
@@ -287,6 +359,11 @@ EN: dict[str, str] = {
         "/help — this help\n\n"
         "🔁 For a round trip press <b>🔁 Add return</b> in the panel — both legs are priced "
         "together, which is not the same as two separate tickets.\n\n"
+        "<b>Open a watch</b> (/list → tap the route):\n"
+        "📉 <b>Price history</b> — a graph of where the fare has been. I say whether to book "
+        "now or wait.\n"
+        "🔥 <b>Price alert</b> — a separate warning when it drops below your number.\n"
+        "⏸ <b>Pause</b> — stop it for a while. The history is kept, so don't delete it.\n\n"
         "Shortcut: <code>/add ICN TAS 2026-08-15 2026-08-29</code>\n\n"
         "<i>Prices are read from the sites live, but can change before you buy — "
         "this is a comparison, not a guarantee.</i>"
@@ -347,6 +424,37 @@ EN: dict[str, str] = {
     "watch_list": "📋 <b>Your watches:</b>",
     "watch_limit": "Watch limit is {limit}. Remove an old one first: /list",
     "watch_unknown": "No such watch",
+    "watch_open": "Tap a route to open it.",
+    "watch_detail": "🔔 <b>{route}</b>\n{date}\n\n💱 {market} · {currency}\n{status}{threshold}",
+    "status_active": "✅ Watching — three times a day",
+    "status_paused": "⏸ Paused — no messages",
+    "watch_paused": "⏸ Paused. The history is kept.",
+    "watch_resumed": "▶️ Watching again",
+    "thr_line": "\n🔥 Alert: below {price}",
+    "thr_ask": (
+        "🔥 <b>Price alert</b>\n\nBelow which price should I warn you separately?\n"
+        "Tap a button or type a number (for example <code>750000</code>)."
+    ),
+    "thr_set": "🔥 Alert set: below {price}",
+    "thr_cleared": "Alert switched off",
+    "thr_bad": "Type just a number, for example <code>750000</code>",
+    "btn_thr_off": "✖️ Switch the alert off",
+    "btn_history": "📉 Price history",
+    "btn_threshold": "🔥 Price alert",
+    "btn_pause": "⏸ Pause",
+    "btn_resume": "▶️ Resume",
+    "btn_delete": "🗑 Delete",
+    "hist_title": "📉 <b>Price history</b>",
+    "hist_thin": (
+        "Not enough history yet — it takes at least two checks.\n"
+        "I check three times a day, so the graph shows up tomorrow."
+    ),
+    "hist_now": "Now: <b>{price}</b>",
+    "hist_range": "Lowest: {low} · highest: {high}",
+    "hist_flat": "➖ The price barely moves — waiting gains nothing.",
+    "hist_low": "🟢 This is the cheapest it has been — a good time to book.",
+    "hist_high": "🔴 {percent}% above the lowest seen — worth waiting.",
+    "hist_mid": "🟡 {percent}% above the lowest seen — middle of the range.",
     "remove_format": "Format: <code>/remove 3</code> — take the number from /list",
     "add_format": "Format: <code>/add ICN TAS 2026-08-15 [return] [price]</code>",
     "add_ok": "✅ Watch added: <b>{route}</b> · {date}{extra}",
