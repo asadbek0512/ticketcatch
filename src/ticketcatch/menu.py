@@ -264,6 +264,13 @@ def watch_keyboard(watch: Watch, lang: str) -> InlineKeyboardMarkup:
     people make while browsing."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            # The stored prices are already on the card, so a live search is an explicit choice
+            # here rather than the price of looking.
+            [
+                InlineKeyboardButton(
+                    text=t(lang, "btn_search_live"), callback_data=f"wgo:{watch.pk}"
+                )
+            ],
             [
                 InlineKeyboardButton(text=t(lang, "btn_history"), callback_data=f"hist:{watch.pk}"),
                 InlineKeyboardButton(text=t(lang, "btn_threshold"), callback_data=f"thr:{watch.pk}"),
@@ -300,6 +307,17 @@ def threshold_keyboard(
         )
     rows.append(_back(lang, f"w:{pk}"))
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def watch_result_keyboard(pk: int, lang: str) -> InlineKeyboardMarkup:
+    """After a live search on a watch — back to the watch, not to the panel, because that is where
+    the user came from and where their alert and history live."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=t(lang, "btn_refresh"), callback_data=f"wgo:{pk}")],
+            _back(lang, f"w:{pk}"),
+        ]
+    )
 
 
 def history_keyboard(pk: int, lang: str) -> InlineKeyboardMarkup:

@@ -30,7 +30,7 @@ UZ: dict[str, str] = {
         "Aviasales — va bitta ro'yxatga jamlab, eng arzonidan boshlab ko'rsataman.\n\n"
         "<b>Nima qila olaman:</b>\n"
         "🔍 Istalgan yo'nalish bo'yicha hozir narx topish\n"
-        "🔔 Yo'nalishni kuzatuvga qo'yish — kuniga 3 marta tekshiraman\n"
+        "🔔 Yo'nalishni kuzatuvga qo'yish — kuniga 2 marta tekshiraman\n"
         "📉 Narx tushsa, o'zim xabar beraman\n"
         "🌍 Dunyoning istalgan aeroporti, o'z valyutangizda\n\n"
         "Boshlash uchun 👇"
@@ -39,7 +39,7 @@ UZ: dict[str, str] = {
         "<b>Qanday ishlataman?</b>\n\n"
         "1️⃣ <b>/qidir</b> — panel ochiladi. Qayerdan, qayerga va qaysi kun — tanlang.\n"
         "2️⃣ <b>🔍 Hozir qidirish</b> — 4 ta saytdan narx keladi (~1 daqiqa).\n"
-        "3️⃣ <b>🔔 Kuzatuvga qo'shish</b> — kuniga 3 marta o'zim tekshirib, narx tushsa yozaman.\n\n"
+        "3️⃣ <b>🔔 Kuzatuvga qo'shish</b> — kuniga 2 marta o'zim tekshirib, narx tushsa yozaman.\n\n"
         "<b>Buyruqlar:</b>\n"
         "/qidir — qidiruv paneli\n"
         "/list — kuzatuvlarim\n"
@@ -110,7 +110,7 @@ UZ: dict[str, str] = {
     "results_foot": "<i>Narx bosilganda saytga o'tasiz. Narx sotib olishgacha o'zgarishi mumkin.</i>",
     "cooldown": "⏳ Biroz kuting — {seconds} soniyadan keyin yana qidira olasiz.",
     # --- watches ---
-    "watch_added": "🔔 <b>{route}</b> · {date} kuzatuvga qo'shildi.\nKuniga 3 marta tekshirib turaman.",
+    "watch_added": "🔔 <b>{route}</b> · {date} kuzatuvga qo'shildi.\nKuniga 2 marta tekshirib turaman.",
     "watch_exists": "Bu yo'nalish allaqachon kuzatuvda",
     "watch_removed": "🗑 Kuzatuv o'chirildi",
     "watch_none": "Sizda kuzatuv yo'q.\n<b>/qidir</b> orqali yo'nalish tanlab, 🔔 tugmasini bosing.",
@@ -119,7 +119,7 @@ UZ: dict[str, str] = {
     "watch_unknown": "Bunday kuzatuv topilmadi",
     "watch_open": "Kuzatuvni ko'rish uchun ustiga bosing.",
     "watch_detail": "🔔 <b>{route}</b>\n{date}\n\n💱 {market} · {currency}\n{status}{threshold}",
-    "status_active": "✅ Kuzatilmoqda — kuniga 3 marta",
+    "status_active": "✅ Kuzatilmoqda — kuniga 2 marta",
     "status_paused": "⏸ Pauzada — xabar yubormayman",
     "watch_paused": "⏸ Pauza qilindi. Tarix saqlanadi.",
     "watch_resumed": "▶️ Yana kuzatilmoqda",
@@ -140,7 +140,7 @@ UZ: dict[str, str] = {
     "hist_title": "📉 <b>Narx tarixi</b>",
     "hist_thin": (
         "Hali tarix yetarli emas — kamida ikki marta tekshirilishi kerak.\n"
-        "Kuniga 3 marta tekshiraman, ertaga grafik paydo bo'ladi."
+        "Kuniga 2 marta tekshiraman, ertaga grafik paydo bo'ladi."
     ),
     "hist_now": "Hozir: <b>{price}</b>",
     "hist_range": "Eng arzon: {low} · eng qimmat: {high}",
@@ -148,6 +148,19 @@ UZ: dict[str, str] = {
     "hist_low": "🟢 Hozir eng arzon davri — olish payti.",
     "hist_high": "🔴 Eng arzonidan {percent}% qimmat — kutib turish arziydi.",
     "hist_mid": "🟡 Eng arzonidan {percent}% qimmat — o'rta daraja.",
+    # --- last known board (instant, from the database) ---
+    "ago_now": "hozir",
+    "ago_min": "{n} daqiqa oldin",
+    "ago_hour": "{n} soat oldin",
+    "ago_day": "{n} kun oldin",
+    "checked_at": "🕒 {ago} tekshirilgan:",
+    "no_prices_yet": (
+        "Hali narx yig'ilmagan — birinchi tekshiruvdan keyin shu yerda darhol ko'rinadi.\n"
+        "Kutmasangiz, 🔍 bilan hozir qidiring."
+    ),
+    "btn_search_live": "🔍 Hozir qayta qidirish",
+    "list_price": "     💰 {price} · {ago}",
+    "list_no_price": "     💰 hali tekshirilmagan",
     "remove_format": "Format: <code>/remove 3</code> — raqamni /list dan oling",
     "add_format": "Format: <code>/add ICN TAS 2026-08-15 [qaytish] [narx]</code>",
     "add_ok": "✅ Kuzatuv qo'shildi: <b>{route}</b> · {date}{extra}",
@@ -189,7 +202,7 @@ RU: dict[str, str] = {
         "и показываю одним списком, начиная с самого дешёвого.\n\n"
         "<b>Что я умею:</b>\n"
         "🔍 Найти цену по любому маршруту прямо сейчас\n"
-        "🔔 Взять маршрут на контроль — проверяю 3 раза в день\n"
+        "🔔 Взять маршрут на контроль — проверяю 2 раза в день\n"
         "📉 Сам напишу, когда цена упадёт\n"
         "🌍 Любой аэропорт мира, в вашей валюте\n\n"
         "Начнём 👇"
@@ -198,7 +211,7 @@ RU: dict[str, str] = {
         "<b>Как пользоваться?</b>\n\n"
         "1️⃣ <b>/qidir</b> — откроется панель. Выберите откуда, куда и когда.\n"
         "2️⃣ <b>🔍 Искать сейчас</b> — цены с 4 сайтов (~1 минута).\n"
-        "3️⃣ <b>🔔 Следить</b> — проверяю 3 раза в день и пишу, когда подешевеет.\n\n"
+        "3️⃣ <b>🔔 Следить</b> — проверяю 2 раза в день и пишу, когда подешевеет.\n\n"
         "<b>Команды:</b>\n"
         "/qidir — панель поиска\n"
         "/list — мои маршруты\n"
@@ -265,7 +278,7 @@ RU: dict[str, str] = {
     "results_head": "🎫 <b>{route}</b> · {date}",
     "results_foot": "<i>Нажмите на цену, чтобы перейти на сайт. Цена может измениться до покупки.</i>",
     "cooldown": "⏳ Подождите — следующий поиск через {seconds} сек.",
-    "watch_added": "🔔 <b>{route}</b> · {date} — слежу.\nПроверяю 3 раза в день.",
+    "watch_added": "🔔 <b>{route}</b> · {date} — слежу.\nПроверяю 2 раза в день.",
     "watch_exists": "Этот маршрут уже отслеживается",
     "watch_removed": "🗑 Маршрут удалён",
     "watch_none": "У вас нет маршрутов.\nОткройте <b>/qidir</b> и нажмите 🔔.",
@@ -274,7 +287,7 @@ RU: dict[str, str] = {
     "watch_unknown": "Такой маршрут не найден",
     "watch_open": "Нажмите на маршрут, чтобы открыть его.",
     "watch_detail": "🔔 <b>{route}</b>\n{date}\n\n💱 {market} · {currency}\n{status}{threshold}",
-    "status_active": "✅ Отслеживается — 3 раза в день",
+    "status_active": "✅ Отслеживается — 2 раза в день",
     "status_paused": "⏸ На паузе — сообщений не будет",
     "watch_paused": "⏸ Поставлено на паузу. История сохранится.",
     "watch_resumed": "▶️ Снова отслеживается",
@@ -295,7 +308,7 @@ RU: dict[str, str] = {
     "hist_title": "📉 <b>История цены</b>",
     "hist_thin": (
         "Истории пока мало — нужно хотя бы две проверки.\n"
-        "Проверяю 3 раза в день, завтра появится график."
+        "Проверяю 2 раза в день, завтра появится график."
     ),
     "hist_now": "Сейчас: <b>{price}</b>",
     "hist_range": "Минимум: {low} · максимум: {high}",
@@ -303,6 +316,19 @@ RU: dict[str, str] = {
     "hist_low": "🟢 Сейчас самая низкая цена — можно брать.",
     "hist_high": "🔴 На {percent}% дороже минимума — стоит подождать.",
     "hist_mid": "🟡 На {percent}% дороже минимума — средний уровень.",
+    # --- last known board (instant, from the database) ---
+    "ago_now": "только что",
+    "ago_min": "{n} мин назад",
+    "ago_hour": "{n} ч назад",
+    "ago_day": "{n} дн назад",
+    "checked_at": "🕒 Проверено {ago}:",
+    "no_prices_yet": (
+        "Цены ещё не собраны — после первой проверки появятся здесь сразу.\n"
+        "Не хотите ждать — нажмите 🔍."
+    ),
+    "btn_search_live": "🔍 Проверить сейчас",
+    "list_price": "     💰 {price} · {ago}",
+    "list_no_price": "     💰 ещё не проверено",
     "remove_format": "Формат: <code>/remove 3</code> — номер возьмите из /list",
     "add_format": "Формат: <code>/add ICN TAS 2026-08-15 [обратно] [цена]</code>",
     "add_ok": "✅ Маршрут добавлен: <b>{route}</b> · {date}{extra}",
@@ -341,7 +367,7 @@ EN: dict[str, str] = {
         "and show them as one list, cheapest first.\n\n"
         "<b>What I can do:</b>\n"
         "🔍 Find the price for any route right now\n"
-        "🔔 Watch a route — I check it 3 times a day\n"
+        "🔔 Watch a route — I check it twice a day\n"
         "📉 Message you when the price drops\n"
         "🌍 Any airport in the world, in your currency\n\n"
         "Let's start 👇"
@@ -350,7 +376,7 @@ EN: dict[str, str] = {
         "<b>How to use it</b>\n\n"
         "1️⃣ <b>/qidir</b> — opens the panel. Pick from, to and the day.\n"
         "2️⃣ <b>🔍 Search now</b> — prices from 4 sites (~1 minute).\n"
-        "3️⃣ <b>🔔 Watch</b> — I check 3 times a day and write when it gets cheaper.\n\n"
+        "3️⃣ <b>🔔 Watch</b> — I check twice a day and write when it gets cheaper.\n\n"
         "<b>Commands:</b>\n"
         "/qidir — search panel\n"
         "/list — my watches\n"
@@ -417,7 +443,7 @@ EN: dict[str, str] = {
     "results_head": "🎫 <b>{route}</b> · {date}",
     "results_foot": "<i>Tap a price to open the site. Prices can change before purchase.</i>",
     "cooldown": "⏳ Please wait — you can search again in {seconds}s.",
-    "watch_added": "🔔 Watching <b>{route}</b> · {date}.\nI'll check it 3 times a day.",
+    "watch_added": "🔔 Watching <b>{route}</b> · {date}.\nI'll check it twice a day.",
     "watch_exists": "You're already watching this route",
     "watch_removed": "🗑 Watch removed",
     "watch_none": "You have no watches.\nOpen <b>/qidir</b> and press 🔔.",
@@ -426,7 +452,7 @@ EN: dict[str, str] = {
     "watch_unknown": "No such watch",
     "watch_open": "Tap a route to open it.",
     "watch_detail": "🔔 <b>{route}</b>\n{date}\n\n💱 {market} · {currency}\n{status}{threshold}",
-    "status_active": "✅ Watching — three times a day",
+    "status_active": "✅ Watching — twice a day",
     "status_paused": "⏸ Paused — no messages",
     "watch_paused": "⏸ Paused. The history is kept.",
     "watch_resumed": "▶️ Watching again",
@@ -447,7 +473,7 @@ EN: dict[str, str] = {
     "hist_title": "📉 <b>Price history</b>",
     "hist_thin": (
         "Not enough history yet — it takes at least two checks.\n"
-        "I check three times a day, so the graph shows up tomorrow."
+        "I check twice a day, so the graph shows up tomorrow."
     ),
     "hist_now": "Now: <b>{price}</b>",
     "hist_range": "Lowest: {low} · highest: {high}",
@@ -455,6 +481,19 @@ EN: dict[str, str] = {
     "hist_low": "🟢 This is the cheapest it has been — a good time to book.",
     "hist_high": "🔴 {percent}% above the lowest seen — worth waiting.",
     "hist_mid": "🟡 {percent}% above the lowest seen — middle of the range.",
+    # --- last known board (instant, from the database) ---
+    "ago_now": "just now",
+    "ago_min": "{n} min ago",
+    "ago_hour": "{n}h ago",
+    "ago_day": "{n}d ago",
+    "checked_at": "🕒 Checked {ago}:",
+    "no_prices_yet": (
+        "No prices collected yet — after the first check they show up here instantly.\n"
+        "If you don't want to wait, press 🔍."
+    ),
+    "btn_search_live": "🔍 Search again now",
+    "list_price": "     💰 {price} · {ago}",
+    "list_no_price": "     💰 not checked yet",
     "remove_format": "Format: <code>/remove 3</code> — take the number from /list",
     "add_format": "Format: <code>/add ICN TAS 2026-08-15 [return] [price]</code>",
     "add_ok": "✅ Watch added: <b>{route}</b> · {date}{extra}",
@@ -558,3 +597,24 @@ def day_label(day: date, lang: str) -> str:
     """'15 avg (Sha)' — short enough for a two-column keyboard."""
     code = normalize(lang)
     return f"{day.day} {MONTHS[code][day.month - 1]} ({WEEKDAYS[code][day.weekday()]})"
+
+
+MINUTE = 60
+HOUR = 3600
+DAY = 86400
+JUST_NOW = 120  # under two minutes, "1 minute ago" is noise — it may as well be now
+
+
+def ago_label(seconds: float, lang: str) -> str:
+    """'3 soat oldin'. How stale a stored price is, in the unit the user thinks in.
+
+    Shown next to every price we did not fetch just now, because a price without its age is a claim
+    rather than an observation."""
+    seconds = max(seconds, 0)
+    if seconds < JUST_NOW:
+        return t(lang, "ago_now")
+    if seconds < HOUR:
+        return t(lang, "ago_min", n=int(seconds // MINUTE))
+    if seconds < DAY:
+        return t(lang, "ago_hour", n=int(seconds // HOUR))
+    return t(lang, "ago_day", n=int(seconds // DAY))

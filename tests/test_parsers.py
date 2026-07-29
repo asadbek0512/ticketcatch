@@ -336,3 +336,50 @@ def test_paused_watches_are_kept_but_not_polled():
 
     fresh = Watch(user_id="1", depart_date=date.today() + timedelta(days=10))
     assert fresh.active and not fresh.paused  # pausing is opt-in, and separate from deleting
+
+
+# --- stored prices, shown instantly -------------------------------------------------------------
+
+
+def test_ago_label_speaks_in_the_unit_a_person_thinks_in():
+    from ticketcatch.i18n import ago_label
+
+    assert ago_label(5, "uz") == "hozir"  # "1 daqiqa oldin" would be noise
+    assert "12" in ago_label(12 * 60, "uz")
+    assert ago_label(3 * 3600, "en") == "3h ago"
+    assert ago_label(2 * 86400, "en") == "2d ago"
+    assert ago_label(-5, "uz") == "hozir"  # a clock skew must not read "-1 kun oldin"
+
+
+def test_watch_card_shows_the_stored_prices_and_how_old_they_are():
+    from datetime import timezone
+
+    from ticketcatch.bot import _watch_card
+    from ticketcatch.models import PriceQuote, Watch, utcnow
+
+    watch = Watch(user_id="1", depart_date=date.today() + timedelta(days=20), currency="krw")
+    captured = utcnow() - timedelta(hours=3)
+    board = [
+        PriceQuote(route_key="r", price=500_000, currency="krw", airline="Asiana Airlines",
+                   depart_at="2026-09-01 10:00", stops=0, captured_at=captured),
+        PriceQuote(route_key="r", price=610_000, currency="krw", airline="China Southern",
+                   depart_at="2026-09-01 22:50", stops=1, captured_at=captured),
+    ]
+    card = _watch_card(watch, "uz", board)
+    assert "500,000 KRW" in card and "610,000 KRW" in card
+    assert "3 soat oldin" in card  # a price without its age is a claim, not an observation
+    assert "kuniga 2 marta" in card  # said once, on the status line — not repeated
+
+    # No captures yet: say so and point at the live search, rather than showing an empty board.
+    empty = _watch_card(watch, "uz", [])
+    assert "🔍" in empty and "tekshirilgan" not in empty
+
+
+def test_naive_timestamps_from_sqlite_do_not_break_the_age():
+    from datetime import datetime as dt
+
+    from ticketcatch.bot import _ago
+
+    # SQLite hands back naive datetimes even though we write aware ones; subtracting the two
+    # shapes raises unless _ago normalises first.
+    assert _ago(dt.utcnow() - timedelta(hours=2), "en") == "2h ago"

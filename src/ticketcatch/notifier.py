@@ -86,12 +86,18 @@ def _line(index: int, q: PriceQuote, lang: str) -> str:
     return f"{head}\n     <i>{_e(detail)}</i>" if detail else head
 
 
+def format_rows(quotes: list[PriceQuote], lang: str) -> str:
+    """The numbered price rows plus the "a quote is not a booking" line. Shared by the on-demand
+    board, the scheduled digest and the stored board a watch shows instantly — the same prices
+    should read identically however the user arrived at them."""
+    body = [_line(i, q, lang) for i, q in enumerate(quotes, start=1)]
+    return "\n".join((*body, "", t(lang, "results_foot")))
+
+
 def format_board(quotes: list[PriceQuote], route: str, date_label: str, lang: str) -> str:
     """The on-demand answer: header, rows, and the reminder that a quote isn't a booking."""
-    lines = [t(lang, "results_head", route=_e(route), date=date_label), ""]
-    lines.extend(_line(i, q, lang) for i, q in enumerate(quotes, start=1))
-    lines.extend(("", t(lang, "results_foot")))
-    return "\n".join(lines)
+    head = t(lang, "results_head", route=_e(route), date=date_label)
+    return f"{head}\n\n{format_rows(quotes, lang)}"
 
 
 def format_digest(watch: Watch, cheapest: list[PriceQuote], previous: PriceQuote | None) -> str:

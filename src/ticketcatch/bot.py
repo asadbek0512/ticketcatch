@@ -1,5 +1,5 @@
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
@@ -13,10 +13,19 @@ from aiogram.types import BotCommand, CallbackQuery, Message
 
 from . import airports, history, menu, money
 from .config import settings
-from .db import counts, get_preference, get_session, init_db, price_history, user_watches
-from .i18n import day_label, normalize, t
+from .db import (
+    counts,
+    get_preference,
+    get_session,
+    init_db,
+    last_board,
+    last_cheapest,
+    price_history,
+    user_watches,
+)
+from .i18n import ago_label, day_label, normalize, t
 from .models import Preference, PriceQuote, Watch, route_key, utcnow
-from .notifier import format_board
+from .notifier import format_board, format_rows
 from .ratelimit import Cooldown
 from .search import day_prices, fetch_offers
 from .sources import SearchOpts
@@ -25,7 +34,7 @@ log = logging.getLogger("ticketcatch")
 
 _DATE_FMT = "%Y-%m-%d"
 _RESULT_LIMIT = 8
-_MAX_WATCHES = 10  # a watch costs a search three times a day; this is generosity, not a wall
+_MAX_WATCHES = 10  # a watch costs a search twice a day; this is generosity, not a wall
 _MAX_LEAD_DAYS = 335  # airlines sell ~11 months out — beyond that every source returns nothing
 
 _searching = Cooldown(settings.search_cooldown_seconds)
@@ -473,6 +482,8 @@ async def _watch_list(pref: Preference) -> tuple[str, object]:
         return t(pref.lang, "watch_none"), menu.start_keyboard(pref.lang)
 
     lines = [t(pref.lang, "watch_list"), ""]
+    async with get_session() as s:
+        latest = {w.pk: await last_cheapest(s, _rkey(w), w.currency) for w in mine}
     for w in mine:
         threshold = (
             f" · 🔥 &lt; {money.format_price(w.threshold_price, w.currency)}"
@@ -484,10 +495,34 @@ async def _watch_list(pref: Preference) -> tuple[str, object]:
         lines.append(
             f"<b>{airports.city(w.origin)} → {airports.city(w.destination)}</b>{paused}\n"
             f"     {day_label(w.depart_date, pref.lang)} · {w.depart_date.isoformat()}{back}"
-            f" · {w.currency.upper()}{threshold}"
+            f"{threshold}"
+        )
+        # The price the list is about, right in the list. Opening a watch to find out what it
+        # currently costs is one tap too many for the question people actually have.
+        best = latest.get(w.pk)
+        lines.append(
+            t(
+                pref.lang,
+                "list_price",
+                price=money.format_price(best.price, best.currency),
+                ago=_ago(best.captured_at, pref.lang),
+            )
+            if best
+            else t(pref.lang, "list_no_price")
         )
     lines.extend(("", f"<i>{t(pref.lang, 'watch_open')}</i>"))
     return "\n".join(lines), menu.watches_keyboard(mine, pref.lang)
+
+
+def _rkey(watch: Watch) -> str:
+    return route_key(watch.origin, watch.destination, watch.depart_date, watch.return_date)
+
+
+def _ago(captured_at: datetime, lang: str) -> str:
+    """How old a stored price is. captured_at is written as UTC-aware but read back naive by
+    SQLite, so both shapes have to work or the subtraction raises."""
+    at = captured_at if captured_at.tzinfo else captured_at.replace(tzinfo=timezone.utc)
+    return ago_label((utcnow() - at).total_seconds(), lang)
 
 
 async def _owned(callback: CallbackQuery, pref: Preference) -> Watch | None:
@@ -513,9 +548,15 @@ def _watch_label(watch: Watch, lang: str) -> tuple[str, str]:
     return route, when
 
 
-def _watch_card(watch: Watch, lang: str) -> str:
+def _watch_card(watch: Watch, lang: str, board: list[PriceQuote] | None = None) -> str:
+    """The watch, and — instantly — the prices the last check found.
+
+    No searching happens here. The poller stores every board it fetches, so the answer to "what
+    does this cost" is already on disk; making the user wait a minute for four websites to
+    re-confirm a number we already have would be a worse answer, not a fresher one. The age is
+    stated on the card, and 🔍 is one tap away when they want it live."""
     route, when = _watch_label(watch, lang)
-    return t(
+    head = t(
         lang,
         "watch_detail",
         route=route,
@@ -529,17 +570,28 @@ def _watch_card(watch: Watch, lang: str) -> str:
             else ""
         ),
     )
+    if not board:
+        return f"{head}\n\n{t(lang, 'no_prices_yet')}"
+    rows = format_rows(board[:_RESULT_LIMIT], lang)
+    return f"{head}\n{t(lang, 'checked_at', ago=_ago(board[0].captured_at, lang))}\n\n{rows}"
+
+
+async def _watch_screen(watch: Watch, lang: str) -> tuple[str, object]:
+    async with get_session() as s:
+        board = await last_board(s, _rkey(watch), watch.currency)
+    return _watch_card(watch, lang, board), menu.watch_keyboard(watch, lang)
 
 
 async def _cb_watch_open(callback: CallbackQuery, state: FSMContext) -> None:
-    """One watch, with everything you can do to it — history, alert, pause, delete."""
+    """One watch: last known prices right away, plus everything you can do to it."""
     await state.clear()  # leaving the threshold prompt by the back button must not keep listening
     pref = await _pref(callback)
     watch = await _owned(callback, pref)
     if watch is None:
         await callback.answer(t(pref.lang, "watch_unknown"), show_alert=True)
         return
-    await _edit(callback.message, _watch_card(watch, pref.lang), menu.watch_keyboard(watch, pref.lang))
+    text, markup = await _watch_screen(watch, pref.lang)
+    await _edit(callback.message, text, markup)
     await callback.answer()
 
 
@@ -567,6 +619,51 @@ def _watch_when(watch: Watch) -> str:
     return f"{out} → {watch.return_date.isoformat()}" if watch.return_date else out
 
 
+async def _cb_watch_search(callback: CallbackQuery) -> None:
+    """A live search for this watch's own route, priced the way the watch is priced.
+
+    The watch carries its own currency and market, so this must not borrow them from the panel:
+    the point of opening a watch is to see that watch's numbers, not today's menu settings."""
+    pref = await _pref(callback)
+    watch = await _owned(callback, pref)
+    if watch is None:
+        await callback.answer(t(pref.lang, "watch_unknown"), show_alert=True)
+        return
+
+    chat_id = _chat(callback)
+    waiting = _searching.remaining(chat_id)
+    if waiting:
+        await callback.answer(t(pref.lang, "cooldown", seconds=waiting), show_alert=True)
+        return
+    _searching.hit(chat_id)
+    await callback.answer()
+
+    route, _ = _watch_label(watch, pref.lang)
+    when = _watch_when(watch)
+    await _edit(callback.message, t(pref.lang, "searching", route=route, date=when))
+    opts = SearchOpts.of(currency=watch.currency, market=watch.market)
+    try:
+        offers = await fetch_offers(
+            watch.origin, watch.destination, watch.depart_date, opts, ret=watch.return_date
+        )
+    except Exception as e:
+        log.exception("watch search failed for %s: %s", watch.pk, e)
+        _searching.clear(chat_id)
+        text, markup = await _watch_screen(watch, pref.lang)
+        await _edit(callback.message, f"{t(pref.lang, 'search_failed')}\n\n{text}", markup)
+        return
+
+    if not offers:
+        await _edit(
+            callback.message,
+            t(pref.lang, "search_empty", route=route, date=when),
+            menu.watch_result_keyboard(watch.pk, pref.lang),
+        )
+        return
+    board = format_board(_live_rows(offers), route, when, pref.lang)
+    await _edit(callback.message, board, menu.watch_result_keyboard(watch.pk, pref.lang))
+
+
 async def _cb_pause(callback: CallbackQuery) -> None:
     """Stop the messages without losing the price history that makes them meaningful."""
     pref = await _pref(callback)
@@ -579,7 +676,8 @@ async def _cb_pause(callback: CallbackQuery) -> None:
         s.add(watch)
         await s.commit()
     await callback.answer(t(pref.lang, "watch_resumed" if not watch.paused else "watch_paused"))
-    await _edit(callback.message, _watch_card(watch, pref.lang), menu.watch_keyboard(watch, pref.lang))
+    text, markup = await _watch_screen(watch, pref.lang)
+    await _edit(callback.message, text, markup)
 
 
 async def _cb_threshold(callback: CallbackQuery, state: FSMContext) -> None:
@@ -635,7 +733,8 @@ async def _cb_set_threshold(callback: CallbackQuery, state: FSMContext) -> None:
         if price
         else t(pref.lang, "thr_cleared")
     )
-    await _edit(callback.message, _watch_card(watch, pref.lang), menu.watch_keyboard(watch, pref.lang))
+    text, markup = await _watch_screen(watch, pref.lang)
+    await _edit(callback.message, text, markup)
 
 
 async def _cmd_list(message: Message) -> None:
@@ -822,6 +921,7 @@ def build_dispatcher() -> Dispatcher:
     dp.callback_query.register(_cb_set_market, F.data.startswith("setmkt:"))
     dp.callback_query.register(_cb_delete, F.data.startswith("del:"))
     dp.callback_query.register(_cb_watch_open, F.data.startswith("w:"))
+    dp.callback_query.register(_cb_watch_search, F.data.startswith("wgo:"))
     dp.callback_query.register(_cb_history, F.data.startswith("hist:"))
     dp.callback_query.register(_cb_pause, F.data.startswith("pause:"))
     dp.callback_query.register(_cb_set_threshold, F.data.startswith("setthr:"))

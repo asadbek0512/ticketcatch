@@ -1,7 +1,7 @@
 # TicketCatch
 
 Telegram bot that watches flight prices across multiple sources and sends the cheapest options
-with links **three times a day**, flagging price drops and threshold alerts.
+with links **twice a day**, flagging price drops and threshold alerts.
 
 Built on the jobcatch architecture (SQLite + httpx + Telegram + a source registry), but instead of
 "is this posting new?" the core question is **"did the price drop?"**.
@@ -41,7 +41,7 @@ cp .env.example .env             # fill TELEGRAM_BOT_TOKEN (sources need no key)
 ```bash
 python -m ticketcatch bot        # run the Telegram bot (user adds watches)
 python -m ticketcatch poll       # one price-check cycle (DRY_RUN logs, doesn't send)
-python -m ticketcatch loop       # continuous — checks every POLL_INTERVAL_SECONDS (8h)
+python -m ticketcatch loop       # continuous — checks every POLL_INTERVAL_SECONDS (12h)
 uv run pytest tests -q           # parser / i18n / airport / dedupe tests
 ```
 
@@ -97,6 +97,14 @@ because the graph tracks "what could I have paid", not every quote we saw. The s
 to that route's own range, and the verdict (book / wait / no movement) is the part users act on.
 Threshold buttons are derived from the observed cheapest, since "alert me under 500,000" is
 meaningless until you know whether the route sells for 300,000 or 3,000,000.
+
+**Looking costs nothing; searching costs a minute.** The poller prices every watch twice a day and
+stores the whole board, so `/list` and the watch screen are database reads: `last_cheapest` puts a
+price and its age next to every row, `last_board` reprints the newest capture in full. Making a tap
+wait ~60s for four websites to re-confirm a number already on disk would be a worse answer, not a
+fresher one — every stored price is stamped with how old it is (`ago_label`), and 🔍 runs a live
+search for people who want one. The digest, the on-demand board and the stored board all render
+through `notifier.format_rows`, so the same prices read identically however you arrived at them.
 
 **Pause is its own column.** `active=False` means deleted; `paused=True` keeps the watch and its
 history but takes it out of `active_watches()`. Reusing one flag for both would mean stopping the

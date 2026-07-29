@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     currency: str = "krw"
     market: str = "kr"
     default_lang: str = "uz"
-    poll_interval_seconds: int = 28800  # 8h — three times a day
+    poll_interval_seconds: int = 43200  # 12h — twice a day
     top_n: int = 3  # how many cheapest options to show per watch
     dry_run: bool = True  # True = log the digest, never send to Telegram
 

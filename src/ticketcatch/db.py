@@ -178,6 +178,35 @@ async def price_history(
     return [(at, int(price)) for at, price in reversed(list(rows.all()))]
 
 
+async def last_board(
+    session: AsyncSession, route_key: str, currency: str
+) -> list[PriceQuote]:
+    """The whole newest capture, cheapest first — what the last poll actually found.
+
+    This is what makes a watch answer instantly. The prices the user was sent this morning are
+    already in the table, so opening a watch is a read, not a minute of scraping: waiting for four
+    websites to re-confirm a number we already have is a worse answer, not a fresher one. The
+    captured_at on the rows tells them how old it is, and 🔍 is there when they want it live."""
+    latest = await session.exec(
+        select(func.max(PriceQuote.captured_at)).where(
+            PriceQuote.route_key == route_key, PriceQuote.currency == currency
+        )
+    )
+    latest_at = latest.first()
+    if latest_at is None:
+        return []
+    rows = await session.exec(
+        select(PriceQuote)
+        .where(
+            PriceQuote.route_key == route_key,
+            PriceQuote.captured_at == latest_at,
+            PriceQuote.currency == currency,
+        )
+        .order_by(asc(PriceQuote.price))
+    )
+    return list(rows.all())
+
+
 async def last_cheapest(session: AsyncSession, route_key: str, currency: str) -> PriceQuote | None:
     """The cheapest quote from the most recent capture batch — the baseline we compare against.
     A batch shares one captured_at (set in the poller), so we find the latest batch timestamp,
