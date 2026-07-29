@@ -119,12 +119,29 @@ processes — share it.
 
 ## Deploy (OCI server)
 
+**Push to `main` and it deploys itself.** The server is a checkout of this repo (read-only deploy
+key) and a cron job runs `ops/deploy.sh` every minute: it fetches, and if the remote moved it
+resets, re-syncs dependencies and restarts both pm2 processes. `data/` and `.env` are gitignored,
+so the live database and secrets survive every deploy.
+
+GitHub Actions is billing-locked on this account, so the workflow in `.github/workflows` sits
+dormant and deployment pulls from the server instead. Nothing changes when billing is fixed —
+the workflow only runs tests.
+
 ```bash
-# data/ must stay excluded — it holds the live watches and price history, which a local
-# copy would silently overwrite (the DB is data/ticketcatch.sqlite, not *.db).
-rsync -az --delete --exclude .venv --exclude .git --exclude __pycache__ --exclude data ./ freeserver:~/ticketcatch/
-ssh freeserver 'cd ~/ticketcatch && ~/.local/bin/uv sync --python 3.11 && pm2 restart ticketcatch-bot ticketcatch-poll'
+ssh freeserver 'bash ~/ticketcatch/ops/deploy.sh'   # deploy now instead of waiting a minute
+ssh freeserver 'tail ~/ticketcatch/data/deploy.log' # what the cron did
 ```
 
 The server needs Python 3.11 (uv installs it; the system python is 3.10). New columns are added
 by `db.init_db()` on startup — no manual migration step.
+
+### Watchdog and backups
+
+| Script | Cron | What it does |
+|---|---|---|
+| `ops/healthcheck.sh` | every 15 min | pm2 status + "has the poller written a price in 10h?" → Telegram alert to `TELEGRAM_OWNER_ID`, once per failure, plus a recovery message |
+| `ops/backup.sh` | 03:30 daily | `sqlite3 .backup` (safe on a live DB) → gzip into `~/backups/ticketcatch`, 14 days kept |
+
+The health check exists because pm2 only sees crashes. A process that is *online* but wedged — a
+stuck browser, a dead long-poll — looks perfectly healthy to it and to nobody else.
