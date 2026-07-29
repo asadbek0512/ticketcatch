@@ -1,10 +1,16 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlmodel import Field, SQLModel
+
+DEFAULT_LEAD_DAYS = 30  # a first-time menu opens on a date far enough out to have fares
 
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def default_depart() -> date:
+    return date.today() + timedelta(days=DEFAULT_LEAD_DAYS)
 
 
 def route_key(origin: str, destination: str, depart: date) -> str:
@@ -24,6 +30,17 @@ class Watch(SQLModel, table=True):
     threshold_price: int | None = None  # fire a special alert when the cheapest drops below this
     active: bool = Field(default=True, index=True)
     created_at: datetime = Field(default_factory=utcnow)
+
+
+class Preference(SQLModel, table=True):
+    """What the menu is currently pointed at, per user. Kept in the DB rather than in FSM state
+    so the route a user picked survives a bot restart — the menu reopens where they left it."""
+
+    pk: int | None = Field(default=None, primary_key=True)
+    user_id: str = Field(index=True, unique=True)  # telegram chat id
+    origin: str = "ICN"
+    destination: str = "TAS"
+    depart_date: date = Field(default_factory=default_depart)
 
 
 class PriceQuote(SQLModel, table=True):

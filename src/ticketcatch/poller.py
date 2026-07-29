@@ -7,38 +7,10 @@ from .config import settings
 from .db import active_watches, get_session, init_db, last_cheapest
 from .models import PriceQuote, Watch, route_key, utcnow
 from .notifier import format_digest, send_text
-from .registry import SOURCES
-from .sources import Quote, SourceError
+from .search import fetch_offers
+from .sources import Quote
 
 log = logging.getLogger("ticketcatch")
-
-
-async def _fetch_route(origin: str, destination: str, depart) -> list[Quote]:
-    """Query every registered source for one route+date and merge their offers. A failing
-    source is logged and skipped so one dead source never blanks the whole route."""
-    merged: list[Quote] = []
-    for name, fetch in SOURCES.items():
-        try:
-            merged.extend(await fetch(origin, destination, depart))
-        except (SourceError, Exception) as e:  # fail loud per-source, keep others alive
-            log.error("source failed [%s] %s-%s: %s", name, origin, destination, e)
-    return merged
-
-
-def _dedupe(offers: list[Quote]) -> list[Quote]:
-    """Sources overlap — the same physical flight can come back from several of them. Keep the
-    cheapest quote per flight so the digest reads like a booking board, not a log.
-
-    Identity is (departure time, stops) rather than the flight number: sources disagree on the
-    number (codeshares) or omit it entirely, but on one route and day two itineraries almost never
-    leave at the same minute with the same number of stops. That is what makes the comparison work
-    — the same seat quoted by three sites collapses to the cheapest of the three."""
-    best: dict[tuple, Quote] = {}
-    for o in offers:
-        key = (o.depart_at, o.stops) if o.depart_at else (o.flight_number or o.airline, None)
-        if key not in best or o.price < best[key].price:
-            best[key] = o
-    return sorted(best.values(), key=lambda o: o.price)
 
 
 def _to_quote_rows(rkey: str, offers: list[Quote], captured_at: datetime) -> list[PriceQuote]:
@@ -78,13 +50,12 @@ async def poll_once() -> dict:
 
     for rkey, watchers in by_route.items():
         first = watchers[0]
-        offers = await _fetch_route(first.origin, first.destination, first.depart_date)
+        offers = await fetch_offers(first.origin, first.destination, first.depart_date)
         if not offers:
             stats["empty"] += 1
             continue
         stats["offers"] += len(offers)
 
-        offers = _dedupe(offers)
         captured_at = utcnow().replace(microsecond=0)
         cheapest = _to_quote_rows(rkey, offers[: settings.top_n], captured_at)
 

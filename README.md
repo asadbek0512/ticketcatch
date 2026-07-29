@@ -46,6 +46,8 @@ In production the bot and the loop run as two processes (e.g. pm2 on the OCI ser
 
 | File | Role |
 |---|---|
+| `menu.py` | Inline menu — route/date pickers, panel and result keyboards |
+| `search.py` | `fetch_offers` — every source merged and deduped; shared by poller and menu |
 | `sources/__init__.py` | `fetch_json` helper, `Quote` dataclass, `SourceError` |
 | `sources/kiwi.py` | Kiwi.com GraphQL search → bookable itineraries (primary source) |
 | `sources/googleflights.py` | Google Flights search → every itinerary that day (cross-check) |
@@ -56,7 +58,7 @@ In production the bot and the loop run as two processes (e.g. pm2 on the OCI ser
 | `db.py` | async SQLite, `active_watches`, `last_cheapest` |
 | `poller.py` | group by route → fetch → dedupe (cheapest per flight) → compare → notify → persist |
 | `notifier.py` | Telegram digest card (price-drop badge, threshold alert) |
-| `bot.py` | Aiogram — `/add ICN TAS 2026-08-15 [price]`, `/list`, `/remove` |
+| `bot.py` | Aiogram — `/qidir` menu, on-demand search, `/add`, `/list`, `/remove` |
 
 ## Adding a source
 

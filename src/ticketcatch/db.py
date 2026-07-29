@@ -8,7 +8,7 @@ from sqlmodel import SQLModel, asc, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from .config import settings
-from .models import PriceQuote, Watch
+from .models import Preference, PriceQuote, Watch
 
 _db_path = Path(settings.db_path)
 _db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -36,6 +36,18 @@ async def init_db() -> None:
 async def get_session() -> AsyncIterator[AsyncSession]:
     async with _session_maker() as session:
         yield session
+
+
+async def get_preference(session: AsyncSession, user_id: str) -> Preference:
+    """The user's current menu selection, created with defaults the first time they open it."""
+    rows = await session.exec(select(Preference).where(Preference.user_id == user_id))
+    pref = rows.first()
+    if pref is None:
+        pref = Preference(user_id=user_id)
+        session.add(pref)
+        await session.commit()
+        await session.refresh(pref)
+    return pref
 
 
 async def active_watches(session: AsyncSession) -> list[Watch]:
