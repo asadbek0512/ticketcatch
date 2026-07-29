@@ -1,49 +1,59 @@
+import asyncio
 import html
 import logging
+import time
 
 import httpx
 
 from .config import settings
+from .i18n import t
 from .models import PriceQuote, Watch
+from .money import format_price
 
 API = "https://api.telegram.org/bot{token}/{method}"
 log = logging.getLogger("ticketcatch")
+
+# Telegram's documented ceilings: ~30 messages/second overall and ~1/second into one chat. Going
+# over earns a 429 with a retry_after, and a poll fanning out to hundreds of watchers would hit it
+# immediately — so the sender paces itself instead of learning by getting throttled.
+GLOBAL_INTERVAL = 1 / 25
+CHAT_INTERVAL = 1.05
+SEND_RETRIES = 3
+
+_send_lock = asyncio.Lock()
+_last_global = 0.0
+_last_to_chat: dict[str, float] = {}
 
 
 def _e(s: str) -> str:
     return html.escape(s or "")
 
 
-# Currencies with no minor unit run into six digits, so they need thousands separators to stay
-# readable at a glance; USD-sized numbers don't.
-_GROUPED = {"krw", "uzs", "jpy", "vnd", "idr"}
-
-
 def _money(q: PriceQuote) -> str:
-    amount = f"{q.price:,}" if q.currency.lower() in _GROUPED else str(q.price)
-    return f"{amount} {q.currency.upper()}"
+    return format_price(q.price, q.currency)
 
 
-def _stops(q: PriceQuote) -> str:
+def _stops(q: PriceQuote, lang: str) -> str:
     """Nonstop vs connecting is the first thing worth seeing after the price, so it gets a badge
     on the headline rather than a word buried in the detail line."""
     if q.stops is None:
-        return "❔ transfer noma'lum"
-    return "✈️ to'g'ridan-to'g'ri" if q.stops == 0 else f"🔁 {q.stops} transfer"
+        return t(lang, "stops_unknown")
+    return t(lang, "nonstop") if q.stops == 0 else t(lang, "transfers", count=q.stops)
 
 
 def _duration(q: PriceQuote) -> str:
+    """'7h 40m' — left in the universal aviation shorthand rather than translated."""
     if not q.duration_min:
         return ""
     hours, minutes = divmod(q.duration_min, 60)
-    return f"{hours}s {minutes:02d}d" if minutes else f"{hours}s"
+    return f"{hours}h {minutes:02d}m" if minutes else f"{hours}h"
 
 
-def _bags(q: PriceQuote) -> str:
+def _bags(q: PriceQuote, lang: str) -> str:
     """Whether the fare already covers a checked bag — the usual reason a price 'changes' later."""
     if q.bags is None:
         return ""
-    return f"🧳 {q.bags} ta" if q.bags else "🧳 yo'q"
+    return t(lang, "bags", count=q.bags) if q.bags else t(lang, "bags_none")
 
 
 # Which site quoted this fare — the whole point is comparing them. "~" marks a cached quote:
@@ -60,39 +70,65 @@ def _source(q: PriceQuote) -> str:
     return _SOURCE_LABEL.get(q.source, q.source)
 
 
-def _line(index: int, q: PriceQuote) -> str:
+def _line(index: int, q: PriceQuote, lang: str) -> str:
     """One booking-board row: price first (that's what's being compared), then who and how."""
     price = _money(q)
     if q.deep_link:
         price = f'<a href="{_e(q.deep_link)}">{price}</a>'
     detail = " · ".join(
-        x for x in (q.depart_at, _duration(q), _bags(q), q.flight_number, _source(q)) if x
+        x for x in (q.depart_at, _duration(q), _bags(q, lang), q.flight_number, _source(q)) if x
     )
     who = _e(q.airline) or "—"
-    head = f"{index}. <b>{price}</b> — {who}  {_stops(q)}"
+    head = f"{index}. <b>{price}</b> — {who}  {_stops(q, lang)}"
     return f"{head}\n     <i>{_e(detail)}</i>" if detail else head
 
 
+def format_board(quotes: list[PriceQuote], route: str, date_label: str, lang: str) -> str:
+    """The on-demand answer: header, rows, and the reminder that a quote isn't a booking."""
+    lines = [t(lang, "results_head", route=_e(route), date=date_label), ""]
+    lines.extend(_line(i, q, lang) for i, q in enumerate(quotes, start=1))
+    lines.extend(("", t(lang, "results_foot")))
+    return "\n".join(lines)
+
+
 def format_digest(watch: Watch, cheapest: list[PriceQuote], previous: PriceQuote | None) -> str:
-    """Build the twice-daily card: route header, price-change badge, top-N cheapest with links."""
+    """The scheduled card: route header, price-change badge, cheapest options with links."""
+    lang = watch.lang
     route = f"{watch.origin} → {watch.destination}"
-    header = f"<b>✈️ {_e(route)} · {watch.depart_date.isoformat()}</b>"
-    lines = [header]
+    lines = [t(lang, "digest_head", route=_e(route), date=watch.depart_date.isoformat())]
 
     best = cheapest[0]
     if previous is not None and previous.price != best.price:
         delta = best.price - previous.price
-        if delta < 0:
-            lines.append(f"↓ <b>{abs(delta)} {best.currency.upper()} arzonlashdi</b>")
-        else:
-            lines.append(f"↑ {delta} {best.currency.upper()} qimmatlashdi")
+        amount = format_price(abs(delta), best.currency)
+        lines.append(t(lang, "cheaper" if delta < 0 else "pricier", amount=amount))
 
     if watch.threshold_price is not None and best.price <= watch.threshold_price:
-        lines.append(f"🔥 <b>ALERT</b> — narx {watch.threshold_price} {best.currency.upper()} dan past!")
+        lines.append(
+            t(lang, "alert", threshold=format_price(watch.threshold_price, best.currency))
+        )
 
     lines.append("")
-    lines.extend(_line(i, q) for i, q in enumerate(cheapest, start=1))
+    lines.extend(_line(i, q, lang) for i, q in enumerate(cheapest, start=1))
+    # The digest arrives unprompted, hours after the prices were read — it needs the "this is a
+    # quote, not a booking" line more than the on-demand board does, not less.
+    lines.extend(("", t(lang, "results_foot")))
     return "\n".join(lines)
+
+
+async def _pace(chat_id: str) -> None:
+    """Hold the caller until this chat and the process as a whole are inside Telegram's limits."""
+    global _last_global
+    async with _send_lock:
+        now = time.monotonic()
+        wait = max(
+            _last_global + GLOBAL_INTERVAL - now,
+            _last_to_chat.get(chat_id, now - CHAT_INTERVAL) + CHAT_INTERVAL - now,
+        )
+        if wait > 0:
+            await asyncio.sleep(wait)
+        stamp = time.monotonic()
+        _last_global, _last_to_chat[chat_id] = stamp, stamp
 
 
 async def send_text(chat_id: str, text: str, preview: bool = False) -> bool:
@@ -102,17 +138,29 @@ async def send_text(chat_id: str, text: str, preview: bool = False) -> bool:
     if not settings.telegram_bot_token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN not set")
     url = API.format(token=settings.telegram_bot_token, method="sendMessage")
-    async with httpx.AsyncClient(timeout=20) as client:
-        resp = await client.post(
-            url,
-            json={
-                "chat_id": chat_id,
-                "text": text,
-                "parse_mode": "HTML",
-                "disable_web_page_preview": not preview,
-            },
-        )
-    if resp.status_code != 200:
+    body = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": not preview,
+    }
+
+    for attempt in range(SEND_RETRIES):
+        await _pace(chat_id)
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                resp = await client.post(url, json=body)
+        except httpx.HTTPError as e:  # a dropped connection is worth one more try
+            log.warning("sendMessage transport error (%s/%s): %s", attempt + 1, SEND_RETRIES, e)
+            continue
+        if resp.status_code == 200:
+            return True
+        if resp.status_code == 429:
+            after = (resp.json().get("parameters") or {}).get("retry_after", 1)
+            log.warning("telegram rate limit, waiting %ss", after)
+            await asyncio.sleep(float(after))
+            continue
+        # 403 = the user blocked the bot; retrying will never help.
         log.error("sendMessage failed %s: %s", resp.status_code, resp.text[:200])
         return False
-    return True
+    return False

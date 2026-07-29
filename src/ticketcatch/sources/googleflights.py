@@ -5,8 +5,7 @@ from datetime import date
 from fast_flights import FlightQuery, Passengers, create_query, fetch_flights_html
 from selectolax.lexbor import LexborHTMLParser
 
-from ..config import settings
-from . import AIRLINE_NAMES, Quote, SourceError
+from . import AIRLINE_NAMES, Quote, SearchOpts, SourceError
 
 SOURCE = "google"
 # Google Flights returns the live, airline-by-airline board a booking site shows — real fares,
@@ -17,12 +16,14 @@ _BUCKET_REST = 3  # everything else on that date
 _SCRIPT = r"script.ds\:1"
 
 
-async def fetch(origin: str, destination: str, depart: date) -> list[Quote]:
+async def fetch(
+    origin: str, destination: str, depart: date, opts: SearchOpts | None = None
+) -> list[Quote]:
     """One live Google Flights search → one Quote per itinerary, cheapest-first upstream."""
-    return await asyncio.to_thread(_fetch_sync, origin, destination, depart)
+    return await asyncio.to_thread(_fetch_sync, origin, destination, depart, opts or SearchOpts.of())
 
 
-def _fetch_sync(origin: str, destination: str, depart: date) -> list[Quote]:
+def _fetch_sync(origin: str, destination: str, depart: date, opts: SearchOpts) -> list[Quote]:
     query = create_query(
         flights=[
             FlightQuery(
@@ -34,7 +35,7 @@ def _fetch_sync(origin: str, destination: str, depart: date) -> list[Quote]:
         trip="one-way",
         seat="economy",
         passengers=Passengers(adults=1),
-        currency=settings.currency.upper(),
+        currency=opts.currency.upper(),
     )
     try:
         html = fetch_flights_html(query)
@@ -46,7 +47,7 @@ def _fetch_sync(origin: str, destination: str, depart: date) -> list[Quote]:
     link = query.url()
     quotes: list[Quote] = []
     for bucket in (_BUCKET_TOP, _BUCKET_REST):
-        quotes.extend(_parse_bucket(payload, bucket, link))
+        quotes.extend(_parse_bucket(payload, bucket, link, opts))
 
     if not quotes:
         raise SourceError(f"google: 0 offers for {origin}-{destination} {depart.isoformat()}")
@@ -74,7 +75,7 @@ def _learn_airlines(payload: list) -> None:
         pass
 
 
-def _parse_bucket(payload: list, index: int, link: str) -> list[Quote]:
+def _parse_bucket(payload: list, index: int, link: str, opts: SearchOpts) -> list[Quote]:
     """Each bucket is [ [itinerary, ...] , ...]; a malformed row is skipped, never fatal."""
     bucket = payload[index] if len(payload) > index else None
     rows = bucket[0] if isinstance(bucket, list) and bucket and isinstance(bucket[0], list) else []
@@ -82,18 +83,18 @@ def _parse_bucket(payload: list, index: int, link: str) -> list[Quote]:
     quotes: list[Quote] = []
     for row in rows:
         try:
-            quotes.append(_to_quote(row, link))
+            quotes.append(_to_quote(row, link, opts))
         except (IndexError, KeyError, TypeError):
             continue
     return quotes
 
 
-def _to_quote(row: list, link: str) -> Quote:
+def _to_quote(row: list, link: str, opts: SearchOpts) -> Quote:
     itinerary, price = row[0], row[1][0][1]
     return Quote(
         source=SOURCE,
         price=int(price),
-        currency=settings.currency.lower(),
+        currency=opts.currency,
         airline=", ".join(itinerary[1]) or itinerary[0],
         flight_number=_flight_number(itinerary),
         depart_at=_stamp(itinerary[4], itinerary[5]),

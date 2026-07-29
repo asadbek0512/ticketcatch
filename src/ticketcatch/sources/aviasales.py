@@ -1,7 +1,7 @@
 from datetime import date
 
 from ..config import settings
-from . import Quote, SourceError, airline_name, fetch_json
+from . import Quote, SearchOpts, SourceError, airline_name, fetch_json
 
 SOURCE = "aviasales"
 # Travelpayouts "Aviasales Data API" — cheapest tickets for a route+date. Free with a token.
@@ -10,8 +10,11 @@ AVIASALES_WEB = "https://www.aviasales.com"
 LIMIT = 30
 
 
-async def fetch(origin: str, destination: str, depart: date) -> list[Quote]:
+async def fetch(
+    origin: str, destination: str, depart: date, opts: SearchOpts | None = None
+) -> list[Quote]:
     """Cheapest one-way offers for origin->destination on the given day, sorted by price."""
+    opts = opts or SearchOpts.of()
     if not settings.travelpayouts_token:
         raise SourceError("aviasales: TRAVELPAYOUTS_TOKEN not set")
 
@@ -19,7 +22,7 @@ async def fetch(origin: str, destination: str, depart: date) -> list[Quote]:
         "origin": origin.upper(),
         "destination": destination.upper(),
         "departure_at": depart.isoformat(),
-        "currency": settings.currency,
+        "currency": opts.currency,
         "one_way": "true",
         "sorting": "price",
         "limit": LIMIT,
@@ -39,7 +42,7 @@ async def fetch(origin: str, destination: str, depart: date) -> list[Quote]:
             Quote(
                 source=SOURCE,
                 price=int(price),
-                currency=str(row.get("currency") or settings.currency),
+                currency=str(row.get("currency") or opts.currency).lower(),
                 airline=airline_name(str(row.get("airline") or "")),
                 flight_number=f"{row.get('airline') or ''}{row.get('flight_number') or ''}",
                 depart_at=_stamp(row.get("departure_at")),

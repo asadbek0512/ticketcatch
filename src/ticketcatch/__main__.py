@@ -8,6 +8,12 @@ logging.basicConfig(
     stream=sys.stderr,
 )
 
+# These log every request URL at INFO, and our source URLs carry the Travelpayouts token as a
+# query parameter — at INFO the API key ends up in plain text in the pm2 log file. Warnings and
+# errors still come through, which is all we ever read them for.
+for _noisy in ("httpx", "httpcore", "primp"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+
 _USAGE = "usage: python -m ticketcatch [bot | poll | loop]"
 
 

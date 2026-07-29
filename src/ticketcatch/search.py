@@ -1,24 +1,135 @@
-import logging
-from datetime import date
+"""One search: every source at once, merged, deduped, cached. Shared by the poller and the menu."""
 
+import asyncio
+import logging
+import re
+from datetime import date, timedelta
+
+from .config import settings
+from .db import cached_offers, get_session, store_offers
+from .models import route_key
 from .registry import SOURCES
-from .sources import Quote
+from .sources import Quote, SearchOpts, airline_name, kiwi
 
 log = logging.getLogger("ticketcatch")
 
+CALENDAR_DAYS = 8  # days shown in the cheapest-day strip
+CALENDAR_LOOKBACK = 3  # how far before the chosen date the strip starts
+CALENDAR_CONCURRENCY = 4
 
-async def fetch_offers(origin: str, destination: str, depart: date) -> list[Quote]:
-    """Every registered source for one route+date, merged, deduped, cheapest first.
 
-    Shared by the scheduled poller and the menu's on-demand search so both answer with the same
-    board. A failing source is logged and skipped — one dead source never blanks a route."""
-    merged: list[Quote] = []
-    for name, fetch in SOURCES.items():
-        try:
-            merged.extend(await fetch(origin, destination, depart))
-        except Exception as e:  # fail loud per-source, keep the others alive
-            log.error("source failed [%s] %s-%s: %s", name, origin, destination, e)
-    return dedupe(merged)
+def cache_key(origin: str, destination: str, depart: date, opts: SearchOpts) -> str:
+    """Route + point of sale: the same flight has a different price bought from another country."""
+    return f"{route_key(origin, destination, depart)}|{opts.key}"
+
+
+async def fetch_offers(
+    origin: str,
+    destination: str,
+    depart: date,
+    opts: SearchOpts | None = None,
+    max_age: int | None = None,
+) -> list[Quote]:
+    """Cheapest-first offers for one route and day.
+
+    Sources run concurrently, so the board takes as long as the slowest site rather than the sum
+    of all four. A source that fails is logged and skipped, never fatal: a partial board still
+    answers "what does this cost today", an exception answers nothing.
+
+    Results are cached per route+day+market, so ten people asking the same question cost one
+    search. Pass max_age=0 to force a live fetch."""
+    opts = opts or SearchOpts.of()
+    key = cache_key(origin, destination, depart, opts)
+    ttl = settings.cache_ttl_seconds if max_age is None else max_age
+
+    async with get_session() as session:
+        hit = await cached_offers(session, key, ttl)
+    if hit:
+        log.info("cache hit %s (%s offers)", key, len(hit))
+        return hit
+
+    results = await asyncio.gather(
+        *(_run(name, fetch, origin, destination, depart, opts) for name, fetch in SOURCES.items())
+    )
+    merged = dedupe([_named(q) for batch in results for q in batch])
+    if merged:
+        async with get_session() as session:
+            await store_offers(session, key, merged)
+    return merged
+
+
+_CARRIER_CODE = re.compile(r"^[A-Z0-9]{2}$")
+
+
+def _named(quote: Quote) -> Quote:
+    """Turn leftover carrier codes into names, once every source has reported.
+
+    Trip.com can only read a code off the logo, and the code→name directory is filled in by Google
+    and Kiwi. Now that the sources run concurrently there is no guaranteed order between them, so
+    the lookup happens here — after the gather, when the directory is complete — instead of inside
+    a parser that might have finished first. Anything that isn't a two-character code is already a
+    name and is left alone."""
+    if not quote.airline:
+        return quote
+    parts = [p.strip() for p in quote.airline.split(",")]
+    quote.airline = ", ".join(airline_name(p) if _CARRIER_CODE.match(p) else p for p in parts)
+    return quote
+
+
+async def _run(name: str, fetch, origin: str, destination: str, depart: date, opts) -> list[Quote]:
+    try:
+        return await fetch(origin, destination, depart, opts)
+    except Exception as e:  # one dead source must not take the whole board down
+        log.error("source failed [%s] %s-%s: %s", name, origin, destination, e)
+        return []
+
+
+def calendar_days(around: date) -> list[date]:
+    """The strip of days to price, never starting before tomorrow."""
+    start = max(around - timedelta(days=CALENDAR_LOOKBACK), date.today() + timedelta(days=1))
+    return [start + timedelta(days=i) for i in range(CALENDAR_DAYS)]
+
+
+async def day_prices(
+    origin: str, destination: str, around: date, opts: SearchOpts | None = None
+) -> list[tuple[date, int | None]]:
+    """Cheapest fare per day around a date — the "am I flying on the wrong day?" answer.
+
+    Only Kiwi is asked. Pricing eight days through all four sources would mean eight browser runs
+    for a hint, and Kiwi is the JSON one: fast, and the source whose fares proved most accurate."""
+    opts = opts or SearchOpts.of()
+    days = calendar_days(around)
+    key = f"days|{origin.upper()}-{destination.upper()}-{days[0].isoformat()}|{opts.key}"
+
+    async with get_session() as session:
+        hit = await cached_offers(session, key, settings.cache_ttl_seconds)
+    if hit:
+        found = {q.depart_at: q.price for q in hit}
+        return [(day, found.get(day.isoformat())) for day in days]
+
+    gate = asyncio.Semaphore(CALENDAR_CONCURRENCY)
+
+    async def cheapest(day: date) -> int | None:
+        async with gate:
+            try:
+                offers = await kiwi.fetch(origin, destination, day, opts)
+            except Exception as e:
+                log.warning("calendar day failed %s %s: %s", origin, day, e)
+                return None
+        return min((o.price for o in offers), default=None)
+
+    prices = await asyncio.gather(*(cheapest(day) for day in days))
+    strip = list(zip(days, prices))
+
+    priced = [
+        Quote(source=kiwi.SOURCE, price=p, currency=opts.currency, depart_at=d.isoformat())
+        for d, p in strip
+        if p is not None
+    ]
+    if priced:
+        async with get_session() as session:
+            await store_offers(session, key, priced)
+    return strip
 
 
 def dedupe(offers: list[Quote]) -> list[Quote]:

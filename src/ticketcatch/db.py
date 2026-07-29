@@ -1,14 +1,18 @@
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import asdict, fields
+from datetime import timedelta
 from pathlib import Path
 
-from sqlalchemy import func
+from sqlalchemy import delete, func
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlmodel import SQLModel, asc, select
+from sqlmodel import SQLModel, asc, desc, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from .config import settings
-from .models import Preference, PriceQuote, Watch
+from .models import Preference, PriceQuote, SearchCache, Watch, utcnow
+from .sources import Quote
 
 _db_path = Path(settings.db_path)
 _db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -16,20 +20,38 @@ _db_path.parent.mkdir(parents=True, exist_ok=True)
 engine = create_async_engine(f"sqlite+aiosqlite:///{_db_path}", echo=False)
 _session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
+CACHE_SWEEP_FACTOR = 4  # rows older than this many TTLs are dead weight, not a fallback
 
-# Columns added after the first release. create_all() only creates missing *tables*, so an
-# existing pricequote table needs them bolted on by hand.
-_ADDED_COLUMNS = {"stops": "INTEGER", "duration_min": "INTEGER", "bags": "INTEGER"}
+# Columns added after a table already shipped. create_all() only creates missing *tables*, so
+# live databases need these bolted on by hand — quoted defaults because SQLite writes them into
+# every existing row.
+_ADDED_COLUMNS: dict[str, dict[str, str]] = {
+    "pricequote": {"stops": "INTEGER", "duration_min": "INTEGER", "bags": "INTEGER"},
+    "watch": {
+        "currency": f"TEXT DEFAULT '{settings.currency.lower()}'",
+        "market": f"TEXT DEFAULT '{settings.market.lower()}'",
+        "lang": f"TEXT DEFAULT '{settings.default_lang}'",
+    },
+    "preference": {
+        "lang": f"TEXT DEFAULT '{settings.default_lang}'",
+        "currency": f"TEXT DEFAULT '{settings.currency.lower()}'",
+        "market": f"TEXT DEFAULT '{settings.market.lower()}'",
+        "searches": "INTEGER DEFAULT 0",
+    },
+}
 
 
 async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
-        rows = await conn.exec_driver_sql("PRAGMA table_info(pricequote)")
-        existing = {r[1] for r in rows.fetchall()}
-        for name, sql_type in _ADDED_COLUMNS.items():
-            if name not in existing:
-                await conn.exec_driver_sql(f"ALTER TABLE pricequote ADD COLUMN {name} {sql_type}")
+        for table, columns in _ADDED_COLUMNS.items():
+            rows = await conn.exec_driver_sql(f"PRAGMA table_info({table})")
+            existing = {r[1] for r in rows.fetchall()}
+            if not existing:  # create_all just made it — already has every column
+                continue
+            for name, sql_type in columns.items():
+                if name not in existing:
+                    await conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}")
 
 
 @asynccontextmanager
@@ -38,21 +60,87 @@ async def get_session() -> AsyncIterator[AsyncSession]:
         yield session
 
 
-async def get_preference(session: AsyncSession, user_id: str) -> Preference:
-    """The user's current menu selection, created with defaults the first time they open it."""
+async def get_preference(
+    session: AsyncSession, user_id: str, lang_hint: str | None = None
+) -> Preference:
+    """The user's current menu selection, created with defaults the first time they open it.
+
+    lang_hint is Telegram's client language, used only at creation: a new user should see their
+    own language immediately, but someone who later picked a language in Settings keeps it."""
     rows = await session.exec(select(Preference).where(Preference.user_id == user_id))
     pref = rows.first()
     if pref is None:
         pref = Preference(user_id=user_id)
+        if lang_hint:
+            pref.lang = lang_hint
         session.add(pref)
         await session.commit()
         await session.refresh(pref)
     return pref
 
 
+_QUOTE_FIELDS = {f.name for f in fields(Quote)}
+
+
+async def cached_offers(session: AsyncSession, key: str, max_age: int) -> list[Quote] | None:
+    """The newest still-fresh search for this key, or None. max_age <= 0 disables the cache."""
+    if max_age <= 0:
+        return None
+    cutoff = utcnow() - timedelta(seconds=max_age)
+    rows = await session.exec(
+        select(SearchCache)
+        .where(SearchCache.cache_key == key, SearchCache.created_at >= cutoff)
+        .order_by(desc(SearchCache.created_at))
+        .limit(1)
+    )
+    row = rows.first()
+    if row is None:
+        return None
+    try:
+        raw = json.loads(row.payload)
+    except ValueError:
+        return None
+    # Tolerate rows written by an older build: unknown keys are dropped, missing ones default.
+    return [Quote(**{k: v for k, v in item.items() if k in _QUOTE_FIELDS}) for item in raw]
+
+
+async def store_offers(session: AsyncSession, key: str, offers: list[Quote]) -> None:
+    """Replace this key's cached result and sweep long-expired rows so the table stays small."""
+    stale = utcnow() - timedelta(seconds=settings.cache_ttl_seconds * CACHE_SWEEP_FACTOR)
+    await session.execute(delete(SearchCache).where(SearchCache.cache_key == key))
+    await session.execute(delete(SearchCache).where(SearchCache.created_at < stale))
+    session.add(SearchCache(cache_key=key, payload=json.dumps([asdict(o) for o in offers])))
+    await session.commit()
+
+
 async def active_watches(session: AsyncSession) -> list[Watch]:
     rows = await session.exec(select(Watch).where(Watch.active == True))  # noqa: E712
     return list(rows.all())
+
+
+async def user_watches(session: AsyncSession, user_id: str) -> list[Watch]:
+    rows = await session.exec(
+        select(Watch)
+        .where(Watch.user_id == user_id, Watch.active == True)  # noqa: E712
+        .order_by(asc(Watch.depart_date))
+    )
+    return list(rows.all())
+
+
+async def counts(session: AsyncSession) -> dict[str, int]:
+    """Headline numbers for /stats and the health check."""
+    users = await session.exec(select(func.count()).select_from(Preference))
+    watches = await session.exec(
+        select(func.count()).select_from(Watch).where(Watch.active == True)  # noqa: E712
+    )
+    quotes = await session.exec(select(func.count()).select_from(PriceQuote))
+    searches = await session.exec(select(func.coalesce(func.sum(Preference.searches), 0)))
+    return {
+        "users": users.first() or 0,
+        "watches": watches.first() or 0,
+        "quotes": quotes.first() or 0,
+        "searches": searches.first() or 0,
+    }
 
 
 async def last_cheapest(session: AsyncSession, route_key: str, currency: str) -> PriceQuote | None:

@@ -5,6 +5,8 @@ from datetime import date
 
 import httpx
 
+from ..config import settings
+
 UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
@@ -17,6 +19,30 @@ HEADERS = {
 
 _MIN_JITTER = 0.4
 _MAX_JITTER = 1.6
+
+
+@dataclass(frozen=True)
+class SearchOpts:
+    """Point of sale for one search: where the ticket is bought and in what money.
+
+    The same seat costs different amounts depending on the country you buy from, so this travels
+    with every request instead of being read from the global settings. That is what lets one
+    process serve a user in Korea and a user in Uzbekistan their own real prices."""
+
+    currency: str = "krw"
+    market: str = "kr"
+
+    @classmethod
+    def of(cls, currency: str | None = None, market: str | None = None) -> "SearchOpts":
+        """Build from user values, falling back to the configured defaults."""
+        return cls(
+            currency=(currency or settings.currency).lower(),
+            market=(market or settings.market).lower(),
+        )
+
+    @property
+    def key(self) -> str:
+        return f"{self.currency}@{self.market}"
 
 
 @dataclass
@@ -65,5 +91,5 @@ async def fetch_json(url: str, params: dict | None = None) -> dict:
     return resp.json()
 
 
-# A source is: async fetch(origin, destination, depart_date) -> list[Quote]
-FetchArgs = tuple[str, str, date]
+# A source is: async fetch(origin, destination, depart_date, opts) -> list[Quote]
+FetchArgs = tuple[str, str, date, SearchOpts]

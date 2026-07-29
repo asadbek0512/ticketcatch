@@ -1,8 +1,8 @@
 import re
 from datetime import date
 
-from ..config import settings
-from . import Quote, SourceError, airline_name
+from ..browser import BrowserUnavailable, new_page
+from . import Quote, SearchOpts, SourceError, airline_name
 
 SOURCE = "tripcom"
 # Trip.com has no public API and blocks plain HTTP with an Akamai challenge, so this source drives
@@ -22,11 +22,6 @@ SEARCH = (
 # Sort tabs are "recommended | nonstop first | cheapest", and the page opens on recommended — which
 # is not the cheapest board. The testid is language-independent; the visible label is not.
 CHEAPEST_TAB = "[data-testid=sort_bar_title_cheapest]"
-UA = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-)
-VIEWPORT = {"width": 1500, "height": 1100}
 CARD = "div.result-item"
 NAV_TIMEOUT = 60_000
 CARDS_TIMEOUT = 90_000
@@ -69,26 +64,23 @@ _STOP_COUNT = re.compile(r"^(\d+)\s*(?:stops?\b|회)")
 _NONSTOP = ("nonstop", "direct", "직항")
 
 
-async def fetch(origin: str, destination: str, depart: date) -> list[Quote]:
-    """Trip.com's own result board for that route and day, priced in our currency."""
-    try:
-        from playwright.async_api import async_playwright
-    except ImportError as e:  # keep the other sources alive on a host without the browser
-        raise SourceError(f"tripcom: playwright not installed ({e})") from e
-
+async def fetch(
+    origin: str, destination: str, depart: date, opts: SearchOpts | None = None
+) -> list[Quote]:
+    """Trip.com's own result board for that route and day, priced for the buyer's market."""
+    opts = opts or SearchOpts.of()
     url = SEARCH.format(
-        host=HOST.format(market=settings.market.lower()),
+        host=HOST.format(market=opts.market),
         origin=origin.lower(),
         destination=destination.lower(),
         depart=depart.isoformat(),
-        currency=settings.currency.upper(),
+        currency=opts.currency.upper(),
     )
 
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True, args=["--no-sandbox"])
-        try:
-            context = await browser.new_context(user_agent=UA, locale="en-US", viewport=VIEWPORT)
-            page = await context.new_page()
+    try:
+        # The browser is shared process-wide and rationed by a semaphore, so this line may wait
+        # for a free slot instead of starting a second Chromium.
+        async with new_page() as page:
             await page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
             try:
                 await page.wait_for_selector(CARD, timeout=CARDS_TIMEOUT)
@@ -101,10 +93,10 @@ async def fetch(origin: str, destination: str, depart: date) -> list[Quote]:
             rows = await _harvest(page)
             if await _sort_by_price(page):
                 rows += await _harvest(page)
-        finally:
-            await browser.close()
+    except BrowserUnavailable as e:  # keep the other sources alive on a host without the browser
+        raise SourceError(f"tripcom: {e}") from e
 
-    quotes = [q for row in rows if (q := _to_quote(row, url))]
+    quotes = [q for row in rows if (q := _to_quote(row, url, opts))]
     if not quotes:
         raise SourceError(f"tripcom: 0 offers for {origin}-{destination} {depart.isoformat()}")
     return quotes
@@ -144,14 +136,14 @@ async def _scroll_to_end(page) -> None:
         seen = count
 
 
-def _to_quote(row: dict, url: str) -> Quote | None:
+def _to_quote(row: dict, url: str, opts: SearchOpts) -> Quote | None:
     price = row.get("price")
     if not price:
         return None
     return Quote(
         source=SOURCE,
         price=round(float(price)),
-        currency=settings.currency.lower(),
+        currency=opts.currency,
         airline=_airline(row.get("codes") or []),
         flight_number="",  # the collapsed card doesn't carry it; dedupe falls back to departure time
         depart_at=_stamp((row.get("times") or [None])[0]),

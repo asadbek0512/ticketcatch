@@ -2,8 +2,7 @@ import httpx
 
 from datetime import date
 
-from ..config import settings
-from . import Quote, SourceError, learn_airline
+from . import Quote, SearchOpts, SourceError, learn_airline
 
 SOURCE = "kiwi"
 # Kiwi.com's public search API — the one the website itself calls. Unlike a cached-fare feed it
@@ -44,8 +43,11 @@ query($search: SearchOnewayInput, $filter: ItinerariesFilterInput, $options: Iti
 """
 
 
-async def fetch(origin: str, destination: str, depart: date) -> list[Quote]:
-    """Every bookable one-way itinerary for that route and day, priced for our market."""
+async def fetch(
+    origin: str, destination: str, depart: date, opts: SearchOpts | None = None
+) -> list[Quote]:
+    """Every bookable one-way itinerary for that route and day, priced for the buyer's market."""
+    opts = opts or SearchOpts.of()
     payload = {
         "query": QUERY,
         "variables": {
@@ -65,10 +67,10 @@ async def fetch(origin: str, destination: str, depart: date) -> list[Quote]:
             # partnerMarket decides the point of sale — fares differ by country, so this must be
             # the market the ticket is actually bought from, not wherever the server happens to run.
             "options": {
-                "currency": settings.currency.lower(),
+                "currency": opts.currency,
                 "locale": "en",
                 "partner": "skypicker",
-                "partnerMarket": settings.market,
+                "partnerMarket": opts.market,
                 "sortBy": "PRICE",
                 "sortOrder": "ASCENDING",
             },
@@ -88,13 +90,13 @@ async def fetch(origin: str, destination: str, depart: date) -> list[Quote]:
     if result.get("__typename") != "Itineraries":
         raise SourceError(f"kiwi: unexpected response {result.get('__typename')}")
 
-    quotes = [q for it in result.get("itineraries") or [] if (q := _to_quote(it))]
+    quotes = [q for it in result.get("itineraries") or [] if (q := _to_quote(it, opts))]
     if not quotes:
         raise SourceError(f"kiwi: 0 offers for {origin}-{destination} {depart.isoformat()}")
     return quotes
 
 
-def _to_quote(itinerary: dict) -> Quote | None:
+def _to_quote(itinerary: dict, opts: SearchOpts) -> Quote | None:
     price = (itinerary.get("price") or {}).get("amount")
     if price is None:
         return None
@@ -110,7 +112,7 @@ def _to_quote(itinerary: dict) -> Quote | None:
     return Quote(
         source=SOURCE,
         price=round(float(price)),
-        currency=settings.currency.lower(),
+        currency=opts.currency,
         airline=str(carrier.get("name") or carrier.get("code") or ""),
         flight_number=f"{carrier.get('code') or ''}{first.get('code') or ''}",
         depart_at=_stamp((first.get("source") or {}).get("localTime")),
