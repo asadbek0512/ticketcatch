@@ -75,8 +75,11 @@ def _line(index: int, q: PriceQuote, lang: str) -> str:
     price = _money(q)
     if q.deep_link:
         price = f'<a href="{_e(q.deep_link)}">{price}</a>'
+    back = t(lang, "results_return", date=q.return_at) if q.return_at else ""
     detail = " · ".join(
-        x for x in (q.depart_at, _duration(q), _bags(q, lang), q.flight_number, _source(q)) if x
+        x
+        for x in (q.depart_at, back, _duration(q), _bags(q, lang), q.flight_number, _source(q))
+        if x
     )
     who = _e(q.airline) or "—"
     head = f"{index}. <b>{price}</b> — {who}  {_stops(q, lang)}"
@@ -95,7 +98,10 @@ def format_digest(watch: Watch, cheapest: list[PriceQuote], previous: PriceQuote
     """The scheduled card: route header, price-change badge, cheapest options with links."""
     lang = watch.lang
     route = f"{watch.origin} → {watch.destination}"
-    lines = [t(lang, "digest_head", route=_e(route), date=watch.depart_date.isoformat())]
+    when = watch.depart_date.isoformat()
+    if watch.return_date:
+        when = f"{when} → {watch.return_date.isoformat()}"
+    lines = [t(lang, "digest_head", route=_e(route), date=when)]
 
     best = cheapest[0]
     if previous is not None and previous.price != best.price:

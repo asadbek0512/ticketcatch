@@ -18,7 +18,7 @@ def _group_key(watch: Watch) -> tuple[str, str, str]:
     from the same country in the same money. Two users watching ICN→TAS from Korea and from
     Uzbekistan are two different questions with two different answers."""
     return (
-        route_key(watch.origin, watch.destination, watch.depart_date),
+        route_key(watch.origin, watch.destination, watch.depart_date, watch.return_date),
         watch.currency,
         watch.market,
     )
@@ -39,6 +39,8 @@ def _to_quote_rows(rkey: str, offers: list[Quote], captured_at: datetime) -> lis
             stops=o.stops,
             duration_min=o.duration_min,
             bags=o.bags,
+            return_at=o.return_at,
+            return_stops=o.return_stops,
             captured_at=captured_at,
         )
         for o in offers
@@ -50,7 +52,9 @@ async def _poll_group(key: tuple[str, str, str], watchers: list[Watch], stats: d
     first = watchers[0]
     opts = SearchOpts.of(currency=currency, market=market)
     try:
-        offers = await fetch_offers(first.origin, first.destination, first.depart_date, opts)
+        offers = await fetch_offers(
+            first.origin, first.destination, first.depart_date, opts, ret=first.return_date
+        )
     except Exception as e:
         log.error("route failed %s: %s", rkey, e)
         stats["errors"] += 1

@@ -17,8 +17,11 @@ SOURCE = "tripcom"
 HOST = "https://{market}.trip.com"
 SEARCH = (
     "{host}/flights/showfarefirst?dcity={origin}&acity={destination}&ddate={depart}"
-    "&triptype=ow&class=y&quantity=1&locale=en-US&curr={currency}"
+    "&triptype={triptype}&class=y&quantity=1&locale=en-US&curr={currency}"
 )
+# A round trip adds the return date and flips the trip type. The board still lists one card per
+# outbound option, priced for the pair — same shape as one-way, so the parser is unchanged.
+RETURN_SEARCH = SEARCH + "&rdate={ret}"
 # Sort tabs are "recommended | nonstop first | cheapest", and the page opens on recommended — which
 # is not the cheapest board. The testid is language-independent; the visible label is not.
 CHEAPEST_TAB = "[data-testid=sort_bar_title_cheapest]"
@@ -65,16 +68,22 @@ _NONSTOP = ("nonstop", "direct", "직항")
 
 
 async def fetch(
-    origin: str, destination: str, depart: date, opts: SearchOpts | None = None
+    origin: str,
+    destination: str,
+    depart: date,
+    opts: SearchOpts | None = None,
+    ret: date | None = None,
 ) -> list[Quote]:
     """Trip.com's own result board for that route and day, priced for the buyer's market."""
     opts = opts or SearchOpts.of()
-    url = SEARCH.format(
+    url = (RETURN_SEARCH if ret else SEARCH).format(
         host=HOST.format(market=opts.market),
         origin=origin.lower(),
         destination=destination.lower(),
         depart=depart.isoformat(),
         currency=opts.currency.upper(),
+        triptype="rt" if ret else "ow",
+        ret=ret.isoformat() if ret else "",
     )
 
     try:

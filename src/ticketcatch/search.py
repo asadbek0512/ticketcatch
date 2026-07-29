@@ -18,9 +18,15 @@ CALENDAR_LOOKBACK = 3  # how far before the chosen date the strip starts
 CALENDAR_CONCURRENCY = 4
 
 
-def cache_key(origin: str, destination: str, depart: date, opts: SearchOpts) -> str:
-    """Route + point of sale: the same flight has a different price bought from another country."""
-    return f"{route_key(origin, destination, depart)}|{opts.key}"
+def cache_key(
+    origin: str, destination: str, depart: date, opts: SearchOpts, ret: date | None = None
+) -> str:
+    """Route + point of sale: the same flight has a different price bought from another country.
+
+    The return date is part of the key because a round trip is priced as a pair — its fare is not
+    the one-way fare, so the two searches must never share a cache entry."""
+    base = f"{route_key(origin, destination, depart)}|{opts.key}"
+    return f"{base}|r{ret.isoformat()}" if ret else base
 
 
 async def fetch_offers(
@@ -29,6 +35,7 @@ async def fetch_offers(
     depart: date,
     opts: SearchOpts | None = None,
     max_age: int | None = None,
+    ret: date | None = None,
 ) -> list[Quote]:
     """Cheapest-first offers for one route and day.
 
@@ -39,7 +46,7 @@ async def fetch_offers(
     Results are cached per route+day+market, so ten people asking the same question cost one
     search. Pass max_age=0 to force a live fetch."""
     opts = opts or SearchOpts.of()
-    key = cache_key(origin, destination, depart, opts)
+    key = cache_key(origin, destination, depart, opts, ret)
     ttl = settings.cache_ttl_seconds if max_age is None else max_age
 
     async with get_session() as session:
@@ -49,7 +56,10 @@ async def fetch_offers(
         return hit
 
     results = await asyncio.gather(
-        *(_run(name, fetch, origin, destination, depart, opts) for name, fetch in SOURCES.items())
+        *(
+            _run(name, fetch, origin, destination, depart, opts, ret)
+            for name, fetch in SOURCES.items()
+        )
     )
     merged = dedupe([_named(q) for batch in results for q in batch])
     if merged:
@@ -76,9 +86,11 @@ def _named(quote: Quote) -> Quote:
     return quote
 
 
-async def _run(name: str, fetch, origin: str, destination: str, depart: date, opts) -> list[Quote]:
+async def _run(
+    name: str, fetch, origin: str, destination: str, depart: date, opts, ret: date | None
+) -> list[Quote]:
     try:
-        return await fetch(origin, destination, depart, opts)
+        return await fetch(origin, destination, depart, opts, ret)
     except Exception as e:  # one dead source must not take the whole board down
         log.error("source failed [%s] %s-%s: %s", name, origin, destination, e)
         return []
@@ -91,7 +103,11 @@ def calendar_days(around: date) -> list[date]:
 
 
 async def day_prices(
-    origin: str, destination: str, around: date, opts: SearchOpts | None = None
+    origin: str,
+    destination: str,
+    around: date,
+    opts: SearchOpts | None = None,
+    ret: date | None = None,
 ) -> list[tuple[date, int | None]]:
     """Cheapest fare per day around a date — the "am I flying on the wrong day?" answer.
 
@@ -100,6 +116,10 @@ async def day_prices(
     opts = opts or SearchOpts.of()
     days = calendar_days(around)
     key = f"days|{origin.upper()}-{destination.upper()}-{days[0].isoformat()}|{opts.key}"
+    if ret:
+        # On a round trip the strip prices "leave this day, come back on the fixed return date",
+        # which is a different question — and a different cache entry — from the one-way strip.
+        key = f"{key}|r{ret.isoformat()}"
 
     async with get_session() as session:
         hit = await cached_offers(session, key, settings.cache_ttl_seconds)
@@ -112,7 +132,7 @@ async def day_prices(
     async def cheapest(day: date) -> int | None:
         async with gate:
             try:
-                offers = await kiwi.fetch(origin, destination, day, opts)
+                offers = await kiwi.fetch(origin, destination, day, opts, ret)
             except Exception as e:
                 log.warning("calendar day failed %s %s: %s", origin, day, e)
                 return None
@@ -139,10 +159,17 @@ def dedupe(offers: list[Quote]) -> list[Quote]:
     Identity is (departure time, stops) rather than the flight number: sources disagree on the
     number (codeshares) or omit it entirely, but on one route and day two itineraries almost never
     leave at the same minute with the same number of stops. That is what makes the comparison work
-    — the same seat quoted by three sites collapses to the cheapest of the three."""
+    — the same seat quoted by three sites collapses to the cheapest of the three.
+
+    On a round trip the return leg joins the key, because two trips can share an outbound flight
+    and come back on different ones — collapsing those would hide the cheaper pairing."""
     best: dict[tuple, Quote] = {}
     for o in offers:
-        key = (o.depart_at, o.stops) if o.depart_at else (o.flight_number or o.airline, None)
+        key = (
+            (o.depart_at, o.stops, o.return_at)
+            if o.depart_at
+            else (o.flight_number or o.airline, None, o.return_at)
+        )
         if key not in best or o.price < best[key].price:
             best[key] = o
     return sorted(best.values(), key=lambda o: o.price)
