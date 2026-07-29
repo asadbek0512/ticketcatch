@@ -16,6 +16,7 @@ from .models import Preference, Watch
 AIRPORT_COLUMNS = 3
 REGION_COLUMNS = 2
 DATE_CHOICES = 14  # days offered as buttons, starting tomorrow
+RETURN_CHOICES = 14  # return dates offered, counted from the outbound day
 DATE_COLUMNS = 2
 CURRENCY_COLUMNS = 3
 MARKET_COLUMNS = 2
@@ -41,6 +42,11 @@ def panel_text(pref: Preference) -> str:
             "",
             f"<b>{airports.label(pref.origin)} → {airports.label(pref.destination)}</b>",
             t(lang, "panel_date", date=f"{day_label(pref.depart_date, lang)} · {pref.depart_date}"),
+            (
+                t(lang, "panel_return", date=f"{day_label(pref.return_date, lang)} · {pref.return_date}")
+                if pref.return_date
+                else t(lang, "panel_oneway")
+            ),
             t(
                 lang,
                 "panel_money",
@@ -65,7 +71,15 @@ def panel_keyboard(pref: Preference) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text=f"📅 {day_label(pref.depart_date, lang)}", callback_data="pick:depart"
-                )
+                ),
+                InlineKeyboardButton(
+                    text=(
+                        f"🔁 {day_label(pref.return_date, lang)}"
+                        if pref.return_date
+                        else t(lang, "btn_roundtrip")
+                    ),
+                    callback_data="pick:ret",
+                ),
             ],
             [InlineKeyboardButton(text=t(lang, "btn_search"), callback_data="go")],
             [
@@ -184,6 +198,29 @@ def days_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def return_date_keyboard(depart: date, current: date | None, lang: str) -> InlineKeyboardMarkup:
+    """Return dates, offered as trip lengths from the outbound day.
+
+    People book a return by how long they are staying — "a week", "two weeks" — not by scrolling a
+    calendar to an absolute date, so the buttons are the days after departure rather than the days
+    after today."""
+    buttons = [
+        InlineKeyboardButton(
+            text=day_label(depart + timedelta(days=i), lang),
+            callback_data=f"set:ret:{(depart + timedelta(days=i)).isoformat()}",
+        )
+        for i in range(1, RETURN_CHOICES + 1)
+    ]
+    rows = _rows(buttons, DATE_COLUMNS)
+    rows.append(
+        [InlineKeyboardButton(text=t(lang, "btn_other_date"), callback_data="manual:ret")]
+    )
+    if current:
+        rows.append([InlineKeyboardButton(text=t(lang, "btn_clear_return"), callback_data="set:ret:")])
+    rows.append(_back(lang))
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 # --- results -----------------------------------------------------------------------------------
 
 
@@ -207,7 +244,10 @@ def watches_keyboard(watches: list[Watch], lang: str) -> InlineKeyboardMarkup:
     rows = [
         [
             InlineKeyboardButton(
-                text=f"🗑 {w.origin}→{w.destination} · {w.depart_date.isoformat()}",
+                text=(
+                    f"🗑 {w.origin}→{w.destination} · {w.depart_date.isoformat()}"
+                    + (f" 🔁 {w.return_date.isoformat()}" if w.return_date else "")
+                ),
                 callback_data=f"del:{w.pk}",
             )
         ]

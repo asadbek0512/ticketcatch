@@ -13,8 +13,8 @@ The digest is a real booking board: every airline flying the route that day, che
 with departure time, duration, stop count and flight number.
 
 Not tied to one route or one country any more: ~140 airports worldwide, three interface languages
-(uz/ru/en), and a per-user currency and market. Started as ICN ⇄ TAS in Korean won; that is now
-just the default.
+(uz/ru/en), a per-user currency and market, and one-way or round-trip search. Started as ICN ⇄ TAS
+in Korean won; that is now just the default.
 
 Four sources are polled and merged: **Kiwi.com** (bookable fares priced for the user's market,
 per-itinerary booking link, baggage allowance — the primary source), **Google Flights** (covers
@@ -52,7 +52,7 @@ In production the bot and the loop run as two processes (e.g. pm2 on the OCI ser
 | Command | What it does |
 |---|---|
 | `/start` | Welcome card → the search panel |
-| `/qidir` | The panel: from / to / date / search / watch |
+| `/qidir` | The panel: from / to / date / return / search / watch |
 | `/list` | Active watches, each with its own delete button |
 | `/sozlama` | Language, currency, market |
 | `/help` | How it works, in the user's language |
@@ -63,7 +63,7 @@ In production the bot and the loop run as two processes (e.g. pm2 on the OCI ser
 | File | Role |
 |---|---|
 | `bot.py` | Aiogram — commands, callbacks, free-text airport search |
-| `menu.py` | Inline menu — panel, pickers, calendar strip, settings keyboards |
+| `menu.py` | Inline menu — panel, pickers, return dates, calendar strip, settings |
 | `i18n.py` | uz/ru/en tables, months, weekdays, country names; `t(lang, key, **kw)` |
 | `airports.py` | ~140 airports in 8 regions; ranked fuzzy `search()` |
 | `money.py` | Markets (point of sale) vs currencies, price formatting |
@@ -77,11 +77,19 @@ In production the bot and the loop run as two processes (e.g. pm2 on the OCI ser
 | `sources/aviasales.py` | Travelpayouts cached fares — cheap quotes, may already be sold |
 | `registry.py` | `SOURCES` map — every registered source is merged and deduped |
 | `models.py` | `Watch`, `PriceQuote`, `Preference` (per-user settings), `SearchCache` |
+| `ops/` | `deploy.sh` (pull + restart), `healthcheck.sh` (watchdog), `backup.sh` |
 | `db.py` | async SQLite, column migrations, cache read/write, stats |
 | `poller.py` | group by route+market → fetch in parallel → compare → notify → persist |
 | `notifier.py` | Telegram digest card, price-drop badge, send pacing and 429 retries |
 
-### Two things worth knowing
+**Round trips are priced as a pair, not as two tickets.** Adding a return date changes the query,
+not just the display: Kiwi switches GraphQL root field, Trip.com flips `triptype`, Google searches
+both legs. So a round trip is a different product from the same outbound flown one way — it gets
+its own cache entry, its own `route_key`, and its own watch. Kiwi describes the return leg;
+Google and Trip.com price the pair against the outbound they list and leave `return_at` empty,
+which is why the board can show the same outbound from two sources without merging them.
+
+### Three things worth knowing
 
 **Market is not currency.** `market` is the country the ticket is bought from and changes the
 fare itself; `currency` only changes how that fare is written. A watch copies both at creation
@@ -96,8 +104,12 @@ source has reported. Move it back inside a parser and Trip.com quotes start read
 ## Adding a source
 
 1. Write `sources/aviata.py` with `SOURCE = "aviata"` and
-   `async def fetch(origin, destination, depart, opts: SearchOpts | None = None) -> list[Quote]`.
-   Read prices with `opts.currency` / `opts.market`, never from `settings`.
+   ```python
+   async def fetch(origin, destination, depart, opts: SearchOpts | None = None,
+                   ret: date | None = None) -> list[Quote]
+   ```
+   Read prices with `opts.currency` / `opts.market`, never from `settings`. If it cannot price a
+   round trip, raise `SourceError` when `ret` is set — the board drops it and keeps the others.
 2. If it needs a browser, use `async with browser.new_page() as page` — never launch your own.
 3. Register it in `registry.py`. The poller picks it up automatically and merges its offers.
 

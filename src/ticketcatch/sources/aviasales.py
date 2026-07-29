@@ -11,23 +11,29 @@ LIMIT = 30
 
 
 async def fetch(
-    origin: str, destination: str, depart: date, opts: SearchOpts | None = None
+    origin: str,
+    destination: str,
+    depart: date,
+    opts: SearchOpts | None = None,
+    ret: date | None = None,
 ) -> list[Quote]:
-    """Cheapest one-way offers for origin->destination on the given day, sorted by price."""
+    """Cheapest cached offers for origin->destination on the given day, sorted by price."""
     opts = opts or SearchOpts.of()
     if not settings.travelpayouts_token:
         raise SourceError("aviasales: TRAVELPAYOUTS_TOKEN not set")
 
-    params = {
+    params: dict[str, object] = {
         "origin": origin.upper(),
         "destination": destination.upper(),
         "departure_at": depart.isoformat(),
         "currency": opts.currency,
-        "one_way": "true",
+        "one_way": "false" if ret else "true",
         "sorting": "price",
         "limit": LIMIT,
         "token": settings.travelpayouts_token,
     }
+    if ret:
+        params["return_at"] = ret.isoformat()
     payload = await fetch_json(API, params=params)
     rows = payload.get("data") or []
     if not rows:
@@ -46,6 +52,7 @@ async def fetch(
                 airline=airline_name(str(row.get("airline") or "")),
                 flight_number=f"{row.get('airline') or ''}{row.get('flight_number') or ''}",
                 depart_at=_stamp(row.get("departure_at")),
+                return_at=_stamp(row.get("return_at")),
                 deep_link=_deep_link(row.get("link")),
                 stops=_int(row.get("transfers")),
                 duration_min=_int(row.get("duration")),

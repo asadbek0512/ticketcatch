@@ -26,17 +26,25 @@ CACHE_SWEEP_FACTOR = 4  # rows older than this many TTLs are dead weight, not a 
 # live databases need these bolted on by hand — quoted defaults because SQLite writes them into
 # every existing row.
 _ADDED_COLUMNS: dict[str, dict[str, str]] = {
-    "pricequote": {"stops": "INTEGER", "duration_min": "INTEGER", "bags": "INTEGER"},
+    "pricequote": {
+        "stops": "INTEGER",
+        "duration_min": "INTEGER",
+        "bags": "INTEGER",
+        "return_at": "TEXT DEFAULT ''",
+        "return_stops": "INTEGER",
+    },
     "watch": {
         "currency": f"TEXT DEFAULT '{settings.currency.lower()}'",
         "market": f"TEXT DEFAULT '{settings.market.lower()}'",
         "lang": f"TEXT DEFAULT '{settings.default_lang}'",
+        "return_date": "DATE",
     },
     "preference": {
         "lang": f"TEXT DEFAULT '{settings.default_lang}'",
         "currency": f"TEXT DEFAULT '{settings.currency.lower()}'",
         "market": f"TEXT DEFAULT '{settings.market.lower()}'",
         "searches": "INTEGER DEFAULT 0",
+        "return_date": "DATE",
     },
 }
 

@@ -3,10 +3,10 @@ from datetime import date
 
 from .sources import Quote, SearchOpts, aviasales, googleflights, kiwi, tripcom
 
-# source name -> async fetch(origin, destination, depart_date, opts) -> list[Quote]
+# source name -> async fetch(origin, destination, depart_date, opts, ret) -> list[Quote]
 # The poller merges every registered source, so the digest shows the union of their offers.
 # duffel stays unregistered: its free tier is test-mode and invents airlines and fares.
-Source = Callable[[str, str, date, SearchOpts], Awaitable[list[Quote]]]
+Source = Callable[[str, str, date, SearchOpts, date | None], Awaitable[list[Quote]]]
 
 SOURCES: dict[str, Source] = {
     kiwi.SOURCE: kiwi.fetch,  # bookable fares + per-itinerary booking link, priced for our market

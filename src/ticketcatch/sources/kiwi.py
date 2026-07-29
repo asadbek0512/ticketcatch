@@ -14,7 +14,18 @@ TIMEOUT = 60
 LIMIT = 60  # the whole board for a day; the poller keeps only the cheapest TOP_N
 STATION = "Station:airport:{}"
 
-QUERY = """
+_SEGMENTS = """
+sectorSegments {
+  segment {
+    code
+    source { localTime station { code } }
+    carrier { code name }
+  }
+}
+"""
+
+QUERY = (
+    """
 query($search: SearchOnewayInput, $filter: ItinerariesFilterInput, $options: ItinerariesOptionsInput) {
   onewayItineraries(search: $search, filter: $filter, options: $options) {
     __typename
@@ -25,41 +36,71 @@ query($search: SearchOnewayInput, $filter: ItinerariesFilterInput, $options: Iti
         price { amount }
         bagsInfo { includedCheckedBags }
         bookingOptions { edges { node { bookingUrl } } }
-        ... on ItineraryOneWay {
-          sector {
-            sectorSegments {
-              segment {
-                code
-                source { localTime station { code } }
-                carrier { code name }
-              }
-            }
-          }
+        ... on ItineraryOneWay { sector { %s } }
+      }
+    }
+  }
+}
+"""
+    % _SEGMENTS
+)
+
+# Round trips are a different root field with a different input type — the two legs are priced
+# together, so this is not two one-way searches added up and is usually cheaper than that.
+RETURN_QUERY = (
+    """
+query($search: SearchReturnInput, $filter: ItinerariesFilterInput, $options: ItinerariesOptionsInput) {
+  returnItineraries(search: $search, filter: $filter, options: $options) {
+    __typename
+    ... on Itineraries {
+      itineraries {
+        id
+        duration
+        price { amount }
+        bagsInfo { includedCheckedBags }
+        bookingOptions { edges { node { bookingUrl } } }
+        ... on ItineraryReturn {
+          outbound { %s }
+          inbound { %s }
         }
       }
     }
   }
 }
 """
+    % (_SEGMENTS, _SEGMENTS)
+)
+
+
+def _day(day: date) -> dict[str, str]:
+    return {"start": f"{day.isoformat()}T00:00:00", "end": f"{day.isoformat()}T23:59:59"}
 
 
 async def fetch(
-    origin: str, destination: str, depart: date, opts: SearchOpts | None = None
+    origin: str,
+    destination: str,
+    depart: date,
+    opts: SearchOpts | None = None,
+    ret: date | None = None,
 ) -> list[Quote]:
-    """Every bookable one-way itinerary for that route and day, priced for the buyer's market."""
+    """Every bookable itinerary for that route and day, priced for the buyer's market.
+
+    With `ret` the two legs are priced as one round trip, which is a different — and normally
+    cheaper — fare than the two one-way tickets added together."""
     opts = opts or SearchOpts.of()
+    itinerary: dict[str, object] = {
+        "source": {"ids": [STATION.format(origin.upper())]},
+        "destination": {"ids": [STATION.format(destination.upper())]},
+        "outboundDepartureDate": _day(depart),
+    }
+    if ret:
+        itinerary["inboundDepartureDate"] = _day(ret)
+
     payload = {
-        "query": QUERY,
+        "query": RETURN_QUERY if ret else QUERY,
         "variables": {
             "search": {
-                "itinerary": {
-                    "source": {"ids": [STATION.format(origin.upper())]},
-                    "destination": {"ids": [STATION.format(destination.upper())]},
-                    "outboundDepartureDate": {
-                        "start": f"{depart.isoformat()}T00:00:00",
-                        "end": f"{depart.isoformat()}T23:59:59",
-                    },
-                },
+                "itinerary": itinerary,
                 "passengers": {"adults": 1, "children": 0, "infants": 0},
                 "cabinClass": {"cabinClass": "ECONOMY", "applyMixedClasses": False},
             },
@@ -86,7 +127,8 @@ async def fetch(
     if body.get("errors"):
         raise SourceError(f"kiwi: {str(body['errors'])[:200]}")
 
-    result = (body.get("data") or {}).get("onewayItineraries") or {}
+    root = "returnItineraries" if ret else "onewayItineraries"
+    result = (body.get("data") or {}).get(root) or {}
     if result.get("__typename") != "Itineraries":
         raise SourceError(f"kiwi: unexpected response {result.get('__typename')}")
 
@@ -101,9 +143,10 @@ def _to_quote(itinerary: dict, opts: SearchOpts) -> Quote | None:
     if price is None:
         return None
 
-    segments = [
-        s.get("segment") or {} for s in (itinerary.get("sector") or {}).get("sectorSegments") or []
-    ]
+    # One-way puts the legs under `sector`; a round trip splits them into `outbound` + `inbound`.
+    outbound = itinerary.get("sector") or itinerary.get("outbound") or {}
+    segments = _legs(outbound)
+    back = _legs(itinerary.get("inbound") or {})
     first = segments[0] if segments else {}
     carrier = first.get("carrier") or {}
     learn_airline(carrier.get("code"), carrier.get("name"))
@@ -120,7 +163,13 @@ def _to_quote(itinerary: dict, opts: SearchOpts) -> Quote | None:
         stops=max(len(segments) - 1, 0),
         duration_min=round(duration_sec / 60) if duration_sec else None,
         bags=(itinerary.get("bagsInfo") or {}).get("includedCheckedBags"),
+        return_at=_stamp((back[0].get("source") or {}).get("localTime")) if back else "",
+        return_stops=max(len(back) - 1, 0) if back else None,
     )
+
+
+def _legs(sector: dict) -> list[dict]:
+    return [s.get("segment") or {} for s in sector.get("sectorSegments") or []]
 
 
 def _booking_url(itinerary: dict) -> str:

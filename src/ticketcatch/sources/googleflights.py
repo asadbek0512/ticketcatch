@@ -17,22 +17,43 @@ _SCRIPT = r"script.ds\:1"
 
 
 async def fetch(
-    origin: str, destination: str, depart: date, opts: SearchOpts | None = None
+    origin: str,
+    destination: str,
+    depart: date,
+    opts: SearchOpts | None = None,
+    ret: date | None = None,
 ) -> list[Quote]:
     """One live Google Flights search → one Quote per itinerary, cheapest-first upstream."""
-    return await asyncio.to_thread(_fetch_sync, origin, destination, depart, opts or SearchOpts.of())
+    return await asyncio.to_thread(
+        _fetch_sync, origin, destination, depart, opts or SearchOpts.of(), ret
+    )
 
 
-def _fetch_sync(origin: str, destination: str, depart: date, opts: SearchOpts) -> list[Quote]:
-    query = create_query(
-        flights=[
+def _fetch_sync(
+    origin: str, destination: str, depart: date, opts: SearchOpts, ret: date | None
+) -> list[Quote]:
+    legs = [
+        FlightQuery(
+            date=depart.isoformat(),
+            from_airport=origin.upper(),
+            to_airport=destination.upper(),
+        )
+    ]
+    if ret:
+        # Google prices a round trip against its outbound options: each row is an outbound leg
+        # carrying the fare for the whole trip. That is a real round-trip price, so it belongs on
+        # the board — it just cannot describe the way back, and leaves return_at empty.
+        legs.append(
             FlightQuery(
-                date=depart.isoformat(),
-                from_airport=origin.upper(),
-                to_airport=destination.upper(),
+                date=ret.isoformat(),
+                from_airport=destination.upper(),
+                to_airport=origin.upper(),
             )
-        ],
-        trip="one-way",
+        )
+
+    query = create_query(
+        flights=legs,
+        trip="round-trip" if ret else "one-way",
         seat="economy",
         passengers=Passengers(adults=1),
         currency=opts.currency.upper(),

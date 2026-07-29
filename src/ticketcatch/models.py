@@ -27,10 +27,14 @@ def default_market() -> str:
     return settings.market.lower()
 
 
-def route_key(origin: str, destination: str, depart: date) -> str:
+def route_key(origin: str, destination: str, depart: date, ret: date | None = None) -> str:
     """Stable per-route+date key so an identical route is queried once and fanned out to
-    every watcher, independent of which user asked for it."""
-    return f"{origin.upper()}-{destination.upper()}-{depart.isoformat()}"
+    every watcher, independent of which user asked for it.
+
+    The return date is part of the key: a round trip is a different product at a different price
+    from the same outbound flown one way, and its price history must not mix with it."""
+    base = f"{origin.upper()}-{destination.upper()}-{depart.isoformat()}"
+    return f"{base}-r{ret.isoformat()}" if ret else base
 
 
 class Watch(SQLModel, table=True):
@@ -41,6 +45,9 @@ class Watch(SQLModel, table=True):
     origin: str = "ICN"
     destination: str = "TAS"
     depart_date: date = Field(index=True)
+    # None = one way. A round trip is priced as a pair, so it is a different watch from the same
+    # outbound flown one way — never fold the two together.
+    return_date: date | None = Field(default=None, index=True)
     threshold_price: int | None = None  # fire a special alert when the cheapest drops below this
     active: bool = Field(default=True, index=True)
     created_at: datetime = Field(default_factory=utcnow)
@@ -61,6 +68,7 @@ class Preference(SQLModel, table=True):
     origin: str = "ICN"
     destination: str = "TAS"
     depart_date: date = Field(default_factory=default_depart)
+    return_date: date | None = None  # None = one way
     lang: str = Field(default_factory=default_lang)
     currency: str = Field(default_factory=default_currency)
     market: str = Field(default_factory=default_market)  # country the ticket is bought from
@@ -82,6 +90,8 @@ class PriceQuote(SQLModel, table=True):
     stops: int | None = None  # 0 = nonstop
     duration_min: int | None = None
     bags: int | None = None  # checked bags included in the price
+    return_at: str = ""  # empty on a one-way quote, or when the source doesn't describe the leg
+    return_stops: int | None = None
     captured_at: datetime = Field(default_factory=utcnow, index=True)
 
 

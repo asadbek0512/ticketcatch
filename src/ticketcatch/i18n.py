@@ -46,7 +46,9 @@ UZ: dict[str, str] = {
         "/remove 3 — kuzatuvni o'chirish\n"
         "/sozlama — til, valyuta, davlat\n"
         "/help — shu yordam\n\n"
-        "Tez yo'l: <code>/add ICN TAS 2026-08-15</code>\n\n"
+        "🔁 Borish-qaytish uchun panelda <b>🔁 Qaytish qo'shish</b> tugmasini bosing — "
+        "ikki yo'nalish birga narxlanadi, alohida ikki chipta emas.\n\n"
+        "Tez yo'l: <code>/add ICN TAS 2026-08-15 2026-08-29</code>\n\n"
         "<i>Narxlar saytlardan real vaqtda olinadi, lekin bilet sotib olingunicha "
         "o'zgarishi mumkin — bu kafolat emas, taqqoslash.</i>"
     ),
@@ -56,6 +58,14 @@ UZ: dict[str, str] = {
     "panel_date": "📅 {date}",
     "panel_money": "💱 {market} · {currency}",
     "panel_hint": "Tugmalardan o'zgartiring, keyin 🔍 bosing.",
+    "panel_return": "🔁 Qaytish: {date}",
+    "panel_oneway": "➡️ Faqat borish",
+    "btn_oneway": "➡️ Faqat borish",
+    "btn_roundtrip": "🔁 Qaytish qo'shish",
+    "btn_clear_return": "✖️ Qaytishni olib tashlash",
+    "pick_return": "Qaysi kuni qaytasiz?",
+    "err_return_before": "Qaytish sanasi borish sanasidan keyin bo'lsin.",
+    "results_return": "qaytish {date}",
     "btn_from": "📍 Qayerdan",
     "btn_to": "🎯 Qayerga",
     "btn_date": "📅 Sana",
@@ -103,7 +113,7 @@ UZ: dict[str, str] = {
     "watch_limit": "Kuzatuvlar chegarasi — {limit} ta. Avval eskisini o'chiring: /list",
     "watch_unknown": "Bunday kuzatuv topilmadi",
     "remove_format": "Format: <code>/remove 3</code> — raqamni /list dan oling",
-    "add_format": "Format: <code>/add ICN TAS 2026-08-15 [narx]</code>",
+    "add_format": "Format: <code>/add ICN TAS 2026-08-15 [qaytish] [narx]</code>",
     "add_ok": "✅ Kuzatuv qo'shildi: <b>{route}</b> · {date}{extra}",
     # --- settings ---
     "settings_title": "⚙️ <b>Sozlamalar</b>\n\n🌐 Til: {lang}\n💱 Valyuta: {currency}\n🏳️ Davlat: {market}\n\n<i>Davlat — biletni qaysi mamlakatdan sotib olayotganingiz. Narx shunga qarab o'zgaradi.</i>",
@@ -159,7 +169,9 @@ RU: dict[str, str] = {
         "/remove 3 — удалить маршрут\n"
         "/sozlama — язык, валюта, страна\n"
         "/help — эта справка\n\n"
-        "Быстро: <code>/add ICN TAS 2026-08-15</code>\n\n"
+        "🔁 Для «туда-обратно» нажмите <b>🔁 Добавить обратно</b> в панели — оба плеча "
+        "считаются вместе, а не как два отдельных билета.\n\n"
+        "Быстро: <code>/add ICN TAS 2026-08-15 2026-08-29</code>\n\n"
         "<i>Цены берутся с сайтов в реальном времени, но могут измениться до покупки — "
         "это сравнение, а не гарантия.</i>"
     ),
@@ -168,6 +180,14 @@ RU: dict[str, str] = {
     "panel_date": "📅 {date}",
     "panel_money": "💱 {market} · {currency}",
     "panel_hint": "Измените кнопками, затем нажмите 🔍.",
+    "panel_return": "🔁 Обратно: {date}",
+    "panel_oneway": "➡️ Только туда",
+    "btn_oneway": "➡️ Только туда",
+    "btn_roundtrip": "🔁 Добавить обратно",
+    "btn_clear_return": "✖️ Убрать обратный",
+    "pick_return": "Когда обратно?",
+    "err_return_before": "Обратная дата должна быть позже даты вылета.",
+    "results_return": "обратно {date}",
     "btn_from": "📍 Откуда",
     "btn_to": "🎯 Куда",
     "btn_date": "📅 Дата",
@@ -212,7 +232,7 @@ RU: dict[str, str] = {
     "watch_limit": "Лимит маршрутов — {limit}. Сначала удалите старый: /list",
     "watch_unknown": "Такой маршрут не найден",
     "remove_format": "Формат: <code>/remove 3</code> — номер возьмите из /list",
-    "add_format": "Формат: <code>/add ICN TAS 2026-08-15 [цена]</code>",
+    "add_format": "Формат: <code>/add ICN TAS 2026-08-15 [обратно] [цена]</code>",
     "add_ok": "✅ Маршрут добавлен: <b>{route}</b> · {date}{extra}",
     "settings_title": "⚙️ <b>Настройки</b>\n\n🌐 Язык: {lang}\n💱 Валюта: {currency}\n🏳️ Страна: {market}\n\n<i>Страна — откуда вы покупаете билет. От неё зависит цена.</i>",
     "btn_lang": "🌐 Язык",
@@ -265,7 +285,9 @@ EN: dict[str, str] = {
         "/remove 3 — delete a watch\n"
         "/sozlama — language, currency, country\n"
         "/help — this help\n\n"
-        "Shortcut: <code>/add ICN TAS 2026-08-15</code>\n\n"
+        "🔁 For a round trip press <b>🔁 Add return</b> in the panel — both legs are priced "
+        "together, which is not the same as two separate tickets.\n\n"
+        "Shortcut: <code>/add ICN TAS 2026-08-15 2026-08-29</code>\n\n"
         "<i>Prices are read from the sites live, but can change before you buy — "
         "this is a comparison, not a guarantee.</i>"
     ),
@@ -274,6 +296,14 @@ EN: dict[str, str] = {
     "panel_date": "📅 {date}",
     "panel_money": "💱 {market} · {currency}",
     "panel_hint": "Change it with the buttons, then press 🔍.",
+    "panel_return": "🔁 Return: {date}",
+    "panel_oneway": "➡️ One way",
+    "btn_oneway": "➡️ One way",
+    "btn_roundtrip": "🔁 Add return",
+    "btn_clear_return": "✖️ Remove return",
+    "pick_return": "When are you coming back?",
+    "err_return_before": "The return date must be after the departure date.",
+    "results_return": "return {date}",
     "btn_from": "📍 From",
     "btn_to": "🎯 To",
     "btn_date": "📅 Date",
@@ -318,7 +348,7 @@ EN: dict[str, str] = {
     "watch_limit": "Watch limit is {limit}. Remove an old one first: /list",
     "watch_unknown": "No such watch",
     "remove_format": "Format: <code>/remove 3</code> — take the number from /list",
-    "add_format": "Format: <code>/add ICN TAS 2026-08-15 [price]</code>",
+    "add_format": "Format: <code>/add ICN TAS 2026-08-15 [return] [price]</code>",
     "add_ok": "✅ Watch added: <b>{route}</b> · {date}{extra}",
     "settings_title": "⚙️ <b>Settings</b>\n\n🌐 Language: {lang}\n💱 Currency: {currency}\n🏳️ Country: {market}\n\n<i>Country is where you buy the ticket. The fare itself depends on it.</i>",
     "btn_lang": "🌐 Language",

@@ -88,6 +88,21 @@ def _route(pref: Preference) -> str:
     return f"{pref.origin} → {pref.destination}"
 
 
+def _when(pref: Preference, long: bool = False) -> str:
+    """How this trip's dates read: one date, or both when there is a return leg."""
+    out = f"{day_label(pref.depart_date, pref.lang)} · {pref.depart_date}" if long else (
+        pref.depart_date.isoformat()
+    )
+    if not pref.return_date:
+        return out
+    back = (
+        f"{day_label(pref.return_date, pref.lang)} · {pref.return_date}"
+        if long
+        else pref.return_date.isoformat()
+    )
+    return f"{out} → {back}"
+
+
 def _opts(pref: Preference) -> SearchOpts:
     return SearchOpts.of(currency=pref.currency, market=pref.market)
 
@@ -157,6 +172,12 @@ async def _cb_pick(callback: CallbackQuery) -> None:
     pref = await _pref(callback)
     if field == "depart":
         await _edit(callback.message, t(pref.lang, "ask_date"), menu.date_keyboard(pref.lang))
+    elif field == "ret":
+        await _edit(
+            callback.message,
+            t(pref.lang, "pick_return"),
+            menu.return_date_keyboard(pref.depart_date, pref.return_date, pref.lang),
+        )
     else:
         other = pref.destination if field == "origin" else pref.origin
         label = t(pref.lang, "ask_from" if field == "origin" else "ask_to")
@@ -193,6 +214,23 @@ def _apply(pref: Preference, field: str, value: str) -> str | None:
         if day > date.today() + timedelta(days=_MAX_LEAD_DAYS):
             return "too_far"
         pref.depart_date = day
+        if pref.return_date and pref.return_date <= day:
+            pref.return_date = None  # the old return is now before departure — drop it, don't guess
+        return None
+
+    if field == "ret":
+        if not value:  # the "remove return" button — back to a one-way search
+            pref.return_date = None
+            return None
+        try:
+            day = datetime.strptime(value, _DATE_FMT).date()
+        except ValueError:
+            return "bad_date"
+        if day <= pref.depart_date:
+            return "err_return_before"
+        if day > date.today() + timedelta(days=_MAX_LEAD_DAYS):
+            return "too_far"
+        pref.return_date = day
         return None
 
     code = value.upper()
@@ -208,7 +246,8 @@ def _apply(pref: Preference, field: str, value: str) -> str | None:
 
 
 async def _cb_set(callback: CallbackQuery) -> None:
-    _, field, value = callback.data.split(":", 2)
+    parts = callback.data.split(":", 2)
+    field, value = parts[1], parts[2] if len(parts) > 2 else ""
     pref = await _pref(callback)
     error = _apply(pref, field, value)
     if error:
@@ -224,7 +263,7 @@ async def _cb_manual(callback: CallbackQuery, state: FSMContext) -> None:
     pref = await _pref(callback)
     await state.set_state(Editing.value)
     await state.update_data(field=field)
-    prompt = t(pref.lang, "type_date" if field == "depart" else "type_airport")
+    prompt = t(pref.lang, "type_date" if field in ("depart", "ret") else "type_airport")
     await _edit(callback.message, prompt)
     await callback.answer()
 
@@ -235,8 +274,8 @@ async def _on_typed(message: Message, state: FSMContext) -> None:
     raw = (message.text or "").strip()
     pref = await _pref(message)
 
-    if field == "depart":
-        error = _apply(pref, "depart", raw)
+    if field in ("depart", "ret"):
+        error = _apply(pref, field, raw)
         if error:
             await message.answer(t(pref.lang, error))
             return
@@ -288,6 +327,8 @@ def _live_rows(offers: list) -> list[PriceQuote]:
             stops=o.stops,
             duration_min=o.duration_min,
             bags=o.bags,
+            return_at=o.return_at,
+            return_stops=o.return_stops,
             captured_at=utcnow(),
         )
         for o in offers[:_RESULT_LIMIT]
@@ -307,11 +348,17 @@ async def _cb_search(callback: CallbackQuery) -> None:
     _searching.hit(chat_id)
     await callback.answer()
 
-    route, when = _route(pref), pref.depart_date.isoformat()
+    route, when = _route(pref), _when(pref)
     await _edit(callback.message, t(pref.lang, "searching", route=route, date=when))
 
     try:
-        offers = await fetch_offers(pref.origin, pref.destination, pref.depart_date, _opts(pref))
+        offers = await fetch_offers(
+            pref.origin,
+            pref.destination,
+            pref.depart_date,
+            _opts(pref),
+            ret=pref.return_date,
+        )
     except Exception as e:
         log.exception("live search failed for %s: %s", chat_id, e)
         _searching.clear(chat_id)  # our fault, not theirs — don't make them wait it out
@@ -328,9 +375,7 @@ async def _cb_search(callback: CallbackQuery) -> None:
 
     pref.searches += 1
     await _save(pref)
-    board = format_board(
-        _live_rows(offers), route, f"{day_label(pref.depart_date, pref.lang)} · {when}", pref.lang
-    )
+    board = format_board(_live_rows(offers), route, _when(pref, long=True), pref.lang)
     await _edit(callback.message, board, menu.result_keyboard(pref.lang))
 
 
@@ -349,7 +394,9 @@ async def _cb_days(callback: CallbackQuery) -> None:
     route = _route(pref)
     await _edit(callback.message, t(pref.lang, "searching", route=route, date=t(pref.lang, "btn_cheapest_days")))
     try:
-        strip = await day_prices(pref.origin, pref.destination, pref.depart_date, _opts(pref))
+        strip = await day_prices(
+            pref.origin, pref.destination, pref.depart_date, _opts(pref), ret=pref.return_date
+        )
     except Exception as e:
         log.exception("calendar failed for %s: %s", chat_id, e)
         _searching.clear(chat_id)
@@ -374,6 +421,7 @@ async def _cb_watch(callback: CallbackQuery) -> None:
             w.origin == pref.origin
             and w.destination == pref.destination
             and w.depart_date == pref.depart_date
+            and w.return_date == pref.return_date
             for w in mine
         ):
             await callback.answer(t(pref.lang, "watch_exists"), show_alert=True)
@@ -384,6 +432,7 @@ async def _cb_watch(callback: CallbackQuery) -> None:
                 origin=pref.origin,
                 destination=pref.destination,
                 depart_date=pref.depart_date,
+                return_date=pref.return_date,
                 # Frozen at creation: the digest compares this watch's own price history, which
                 # only holds together if every capture is priced the same way.
                 currency=pref.currency,
@@ -395,7 +444,7 @@ async def _cb_watch(callback: CallbackQuery) -> None:
 
     await callback.answer(t(pref.lang, "saved"))
     await callback.message.answer(
-        t(pref.lang, "watch_added", route=_route(pref), date=pref.depart_date.isoformat())
+        t(pref.lang, "watch_added", route=_route(pref), date=_when(pref))
     )
 
 
@@ -412,9 +461,10 @@ async def _watch_list(pref: Preference) -> tuple[str, object]:
             if w.threshold_price
             else ""
         )
+        back = f" 🔁 {w.return_date.isoformat()}" if w.return_date else ""
         lines.append(
             f"<b>{airports.city(w.origin)} → {airports.city(w.destination)}</b>\n"
-            f"     {day_label(w.depart_date, pref.lang)} · {w.depart_date.isoformat()}"
+            f"     {day_label(w.depart_date, pref.lang)} · {w.depart_date.isoformat()}{back}"
             f" · {w.currency.upper()}{threshold}"
         )
     return "\n".join(lines), menu.watches_keyboard(mine, pref.lang)
@@ -463,7 +513,10 @@ async def _cmd_remove(message: Message, command: CommandObject) -> None:
 
 
 async def _cmd_add(message: Message, command: CommandObject) -> None:
-    """The typing shortcut for people who already know the codes: /add ICN TAS 2026-08-15 [price]."""
+    """The typing shortcut for people who already know the codes.
+
+    /add ICN TAS 2026-08-15 [2026-08-29] [price] — the fourth field is a return date if it parses
+    as one and a threshold price otherwise, so the old one-way form keeps working unchanged."""
     pref = await _pref(message)
     parts = (command.args or "").split()
     if len(parts) < 3:
@@ -480,7 +533,14 @@ async def _cmd_add(message: Message, command: CommandObject) -> None:
         await message.answer(t(pref.lang, "same_city"))
         return
 
-    threshold = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else None
+    rest = parts[3:]
+    if rest and not rest[0].isdigit():
+        error = _apply(staged, "ret", rest[0])
+        if error:
+            await message.answer(t(pref.lang, error))
+            return
+        rest = rest[1:]
+    threshold = int(rest[0]) if rest and rest[0].isdigit() else None
     async with get_session() as s:
         if len(await user_watches(s, pref.user_id)) >= _MAX_WATCHES:
             await message.answer(t(pref.lang, "watch_limit", limit=_MAX_WATCHES))
@@ -491,6 +551,7 @@ async def _cmd_add(message: Message, command: CommandObject) -> None:
                 origin=origin,
                 destination=destination,
                 depart_date=staged.depart_date,
+                return_date=staged.return_date,
                 threshold_price=threshold,
                 currency=pref.currency,
                 market=pref.market,
@@ -505,7 +566,7 @@ async def _cmd_add(message: Message, command: CommandObject) -> None:
             pref.lang,
             "add_ok",
             route=f"{origin} → {destination}",
-            date=staged.depart_date.isoformat(),
+            date=_when(staged),
             extra=extra,
         )
     )

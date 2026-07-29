@@ -205,3 +205,80 @@ def test_codes_become_names_only_when_they_are_codes():
     # unknown code stays readable rather than becoming empty
     assert _named(Quote(source="tripcom", price=1, currency="krw", airline="ZZ")).airline == "ZZ"
     assert _named(Quote(source="tripcom", price=1, currency="krw", airline="")).airline == ""
+
+
+# --- round trip --------------------------------------------------------------------------------
+
+
+def test_round_trip_is_never_cached_as_the_one_way():
+    """A return fare is priced as a pair, so it is a different number from the same outbound flown
+    one way. Sharing a cache key would serve one as the other."""
+    from ticketcatch.search import cache_key
+
+    opts = SearchOpts.of("krw", "kr")
+    one_way = cache_key("ICN", "TAS", date(2026, 9, 2), opts)
+    there_back = cache_key("ICN", "TAS", date(2026, 9, 2), opts, ret=date(2026, 9, 16))
+    assert one_way != there_back
+    assert there_back.endswith("|r2026-09-16")
+
+
+def test_route_key_separates_the_trip_types():
+    from ticketcatch.models import route_key
+
+    assert route_key("ICN", "TAS", date(2026, 9, 2)) == "ICN-TAS-2026-09-02"
+    assert route_key("ICN", "TAS", date(2026, 9, 2), date(2026, 9, 16)) == (
+        "ICN-TAS-2026-09-02-r2026-09-16"
+    )
+
+
+def test_dedupe_keeps_trips_that_differ_only_in_the_way_back():
+    """Same outbound, two different returns — collapsing them would hide the cheaper pairing."""
+    early = Quote(
+        source="kiwi",
+        price=990_000,
+        currency="krw",
+        depart_at="2026-09-02 08:35",
+        stops=1,
+        return_at="2026-09-16 22:30",
+    )
+    late = Quote(
+        source="kiwi",
+        price=1_050_000,
+        currency="krw",
+        depart_at="2026-09-02 08:35",
+        stops=1,
+        return_at="2026-09-17 22:30",
+    )
+    assert len(dedupe([early, late])) == 2
+    # ...but the same pairing quoted twice still collapses to the cheaper quote.
+    cheaper = Quote(**{**early.__dict__, "source": "tripcom", "price": 940_000})
+    merged = dedupe([early, cheaper])
+    assert len(merged) == 1 and merged[0].price == 940_000
+
+
+def test_return_before_departure_is_rejected():
+    """The panel must not be able to hold an impossible trip."""
+    from ticketcatch.bot import _apply
+    from ticketcatch.models import Preference
+
+    pref = Preference(user_id="1", depart_date=date.today() + timedelta(days=30))
+    assert _apply(pref, "ret", (pref.depart_date - timedelta(days=1)).isoformat()) == (
+        "err_return_before"
+    )
+    assert _apply(pref, "ret", pref.depart_date.isoformat()) == "err_return_before"
+    assert _apply(pref, "ret", (pref.depart_date + timedelta(days=7)).isoformat()) is None
+    assert pref.return_date == pref.depart_date + timedelta(days=7)
+    # empty value = the "remove return" button
+    assert _apply(pref, "ret", "") is None
+    assert pref.return_date is None
+
+
+def test_moving_departure_past_the_return_drops_the_return():
+    from ticketcatch.bot import _apply
+    from ticketcatch.models import Preference
+
+    pref = Preference(user_id="1", depart_date=date.today() + timedelta(days=10))
+    _apply(pref, "ret", (date.today() + timedelta(days=17)).isoformat())
+    assert pref.return_date is not None
+    _apply(pref, "depart", (date.today() + timedelta(days=40)).isoformat())
+    assert pref.return_date is None  # not silently left before the new departure

@@ -59,6 +59,11 @@ class Quote:
     stops: int | None = None  # 0 = nonstop; None = source doesn't say
     duration_min: int | None = None  # total travel time, minutes
     bags: int | None = None  # checked bags the price already includes
+    # Return leg, on a round-trip search. `price` is always the whole trip, so a source that
+    # prices the pair without describing the way back (Google quotes the round trip against the
+    # outbound leg it lists) leaves these empty rather than inventing a leg.
+    return_at: str = ""
+    return_stops: int | None = None
 
 
 # IATA code -> airline name, learned at runtime from whichever source ships a directory
@@ -91,5 +96,7 @@ async def fetch_json(url: str, params: dict | None = None) -> dict:
     return resp.json()
 
 
-# A source is: async fetch(origin, destination, depart_date, opts) -> list[Quote]
-FetchArgs = tuple[str, str, date, SearchOpts]
+# A source is: async fetch(origin, destination, depart_date, opts, ret) -> list[Quote]
+# `ret` is the return date, or None for a one-way search. A source that cannot price a round trip
+# raises SourceError when given one — the board drops it and shows what the others found.
+FetchArgs = tuple[str, str, date, SearchOpts, "date | None"]
