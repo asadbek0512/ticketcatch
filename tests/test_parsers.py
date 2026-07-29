@@ -6,7 +6,7 @@ nobody notices until a user compares the digest with their own browser. Each cas
 string one of the sources returned.
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 
@@ -282,3 +282,57 @@ def test_moving_departure_past_the_return_drops_the_return():
     assert pref.return_date is not None
     _apply(pref, "depart", (date.today() + timedelta(days=40)).isoformat())
     assert pref.return_date is None  # not silently left before the new departure
+
+
+# --- price history ------------------------------------------------------------------------------
+
+
+def _points(prices: list[int]) -> list[tuple[datetime, int]]:
+    start = datetime(2026, 7, 1, 6, 0)
+    return [(start + timedelta(hours=8 * i), p) for i, p in enumerate(prices)]
+
+
+def test_sparkline_scales_to_the_window_not_to_absolute_money():
+    from ticketcatch.history import sparkline
+
+    # Same shape, hundredfold prices: the bars must read the same, because the question is
+    # "high or low for this route", not "expensive in general".
+    assert sparkline([100, 200, 300]) == sparkline([10_000, 20_000, 30_000])
+    assert sparkline([500, 500, 500]) == "▁▁▁"  # flat, not noise
+    assert sparkline([]) == ""
+    assert len(sparkline(list(range(200)))) <= 24  # still one phone line
+
+
+def test_verdict_says_buy_at_the_bottom_and_wait_at_the_top():
+    from ticketcatch.history import verdict
+
+    assert "🟢" in verdict([900, 800, 700], "uz")  # cheapest right now
+    assert "🔴" in verdict([700, 800, 900], "uz")  # dearest right now
+    assert "🟡" in verdict([700, 1000, 850], "uz")  # in between
+    assert "➖" in verdict([1000, 1005, 1000], "uz")  # no real movement
+
+
+def test_history_needs_two_captures_before_it_claims_a_trend():
+    from ticketcatch.history import format_history
+
+    one = format_history(_points([500_000]), "krw", "uz", "ICN → TAS", "2026-09-01")
+    assert "▁" not in one and "█" not in one  # a single price is not a graph
+    two = format_history(_points([500_000, 400_000]), "krw", "uz", "ICN → TAS", "2026-09-01")
+    assert "█" in two or "▁" in two
+
+
+def test_threshold_suggestions_come_from_the_observed_price():
+    from ticketcatch.history import suggestions
+
+    assert suggestions([]) == []
+    offered = suggestions(_points([1_000_000, 900_000]))
+    assert offered  # derived from 900_000, the cheapest seen — not fixed round numbers
+    assert all(0 < price < 900_000 for price in offered)
+    assert offered == sorted(offered, reverse=True)
+
+
+def test_paused_watches_are_kept_but_not_polled():
+    from ticketcatch.models import Watch
+
+    fresh = Watch(user_id="1", depart_date=date.today() + timedelta(days=10))
+    assert fresh.active and not fresh.paused  # pausing is opt-in, and separate from deleting

@@ -11,11 +11,11 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand, CallbackQuery, Message
 
-from . import airports, menu, money
+from . import airports, history, menu, money
 from .config import settings
-from .db import counts, get_preference, get_session, init_db, user_watches
+from .db import counts, get_preference, get_session, init_db, price_history, user_watches
 from .i18n import day_label, normalize, t
-from .models import Preference, PriceQuote, Watch, utcnow
+from .models import Preference, PriceQuote, Watch, route_key, utcnow
 from .notifier import format_board
 from .ratelimit import Cooldown
 from .search import day_prices, fetch_offers
@@ -274,6 +274,24 @@ async def _on_typed(message: Message, state: FSMContext) -> None:
     raw = (message.text or "").strip()
     pref = await _pref(message)
 
+    if field and field.startswith("thr:"):
+        # Typed thresholds arrive as "750 000" or "750,000" as often as "750000" — people write
+        # money the way they read it, and rejecting that would be pedantry, not validation.
+        digits = raw.replace(" ", "").replace(",", "").replace(".", "").replace(" ", "")
+        if not digits.isdigit() or int(digits) <= 0:
+            await message.answer(t(pref.lang, "thr_bad"))
+            return
+        watch = await _store_threshold(int(field.split(":")[1]), pref.user_id, int(digits))
+        await state.clear()
+        if watch is None:
+            await message.answer(t(pref.lang, "watch_unknown"))
+            return
+        await message.answer(
+            t(pref.lang, "thr_set", price=money.format_price(watch.threshold_price, watch.currency)),
+            reply_markup=menu.watch_keyboard(watch, pref.lang),
+        )
+        return
+
     if field in ("depart", "ret"):
         error = _apply(pref, field, raw)
         if error:
@@ -462,12 +480,162 @@ async def _watch_list(pref: Preference) -> tuple[str, object]:
             else ""
         )
         back = f" 🔁 {w.return_date.isoformat()}" if w.return_date else ""
+        paused = " ⏸" if w.paused else ""
         lines.append(
-            f"<b>{airports.city(w.origin)} → {airports.city(w.destination)}</b>\n"
+            f"<b>{airports.city(w.origin)} → {airports.city(w.destination)}</b>{paused}\n"
             f"     {day_label(w.depart_date, pref.lang)} · {w.depart_date.isoformat()}{back}"
             f" · {w.currency.upper()}{threshold}"
         )
+    lines.extend(("", f"<i>{t(pref.lang, 'watch_open')}</i>"))
     return "\n".join(lines), menu.watches_keyboard(mine, pref.lang)
+
+
+async def _owned(callback: CallbackQuery, pref: Preference) -> Watch | None:
+    """The watch this callback refers to, but only if it belongs to whoever pressed the button.
+
+    callback_data is client-supplied: nothing stops someone editing `w:7` into `w:8` and reading a
+    stranger's route. Every watch screen goes through here."""
+    pk = callback.data.split(":")[1]
+    if not pk.isdigit():
+        return None
+    async with get_session() as s:
+        watch = await s.get(Watch, int(pk))
+    if watch is None or watch.user_id != pref.user_id or not watch.active:
+        return None
+    return watch
+
+
+def _watch_label(watch: Watch, lang: str) -> tuple[str, str]:
+    route = f"{airports.city(watch.origin)} → {airports.city(watch.destination)}"
+    when = f"📅 {day_label(watch.depart_date, lang)} · {watch.depart_date.isoformat()}"
+    if watch.return_date:
+        when += f"\n🔁 {day_label(watch.return_date, lang)} · {watch.return_date.isoformat()}"
+    return route, when
+
+
+def _watch_card(watch: Watch, lang: str) -> str:
+    route, when = _watch_label(watch, lang)
+    return t(
+        lang,
+        "watch_detail",
+        route=route,
+        date=when,
+        market=money.market_label(watch.market, lang),
+        currency=watch.currency.upper(),
+        status=t(lang, "status_paused" if watch.paused else "status_active"),
+        threshold=(
+            t(lang, "thr_line", price=money.format_price(watch.threshold_price, watch.currency))
+            if watch.threshold_price
+            else ""
+        ),
+    )
+
+
+async def _cb_watch_open(callback: CallbackQuery, state: FSMContext) -> None:
+    """One watch, with everything you can do to it — history, alert, pause, delete."""
+    await state.clear()  # leaving the threshold prompt by the back button must not keep listening
+    pref = await _pref(callback)
+    watch = await _owned(callback, pref)
+    if watch is None:
+        await callback.answer(t(pref.lang, "watch_unknown"), show_alert=True)
+        return
+    await _edit(callback.message, _watch_card(watch, pref.lang), menu.watch_keyboard(watch, pref.lang))
+    await callback.answer()
+
+
+async def _cb_history(callback: CallbackQuery) -> None:
+    """What this watch has cost so far. Free: the poller already captured every one of these
+    prices, so the answer is a database read, not four more searches."""
+    pref = await _pref(callback)
+    watch = await _owned(callback, pref)
+    if watch is None:
+        await callback.answer(t(pref.lang, "watch_unknown"), show_alert=True)
+        return
+    rkey = route_key(watch.origin, watch.destination, watch.depart_date, watch.return_date)
+    async with get_session() as s:
+        points = await price_history(s, rkey, watch.currency)
+    route, _ = _watch_label(watch, pref.lang)
+    card = history.format_history(
+        points, watch.currency, pref.lang, route, _watch_when(watch)
+    )
+    await _edit(callback.message, card, menu.history_keyboard(watch.pk, pref.lang))
+    await callback.answer()
+
+
+def _watch_when(watch: Watch) -> str:
+    out = watch.depart_date.isoformat()
+    return f"{out} → {watch.return_date.isoformat()}" if watch.return_date else out
+
+
+async def _cb_pause(callback: CallbackQuery) -> None:
+    """Stop the messages without losing the price history that makes them meaningful."""
+    pref = await _pref(callback)
+    watch = await _owned(callback, pref)
+    if watch is None:
+        await callback.answer(t(pref.lang, "watch_unknown"), show_alert=True)
+        return
+    watch.paused = not watch.paused
+    async with get_session() as s:
+        s.add(watch)
+        await s.commit()
+    await callback.answer(t(pref.lang, "watch_resumed" if not watch.paused else "watch_paused"))
+    await _edit(callback.message, _watch_card(watch, pref.lang), menu.watch_keyboard(watch, pref.lang))
+
+
+async def _cb_threshold(callback: CallbackQuery, state: FSMContext) -> None:
+    """Offer alert prices derived from what the route has actually cost, or let them type one."""
+    pref = await _pref(callback)
+    watch = await _owned(callback, pref)
+    if watch is None:
+        await callback.answer(t(pref.lang, "watch_unknown"), show_alert=True)
+        return
+    rkey = route_key(watch.origin, watch.destination, watch.depart_date, watch.return_date)
+    async with get_session() as s:
+        points = await price_history(s, rkey, watch.currency)
+
+    await state.set_state(Editing.value)
+    await state.update_data(field=f"thr:{watch.pk}")
+    await _edit(
+        callback.message,
+        t(pref.lang, "thr_ask"),
+        menu.threshold_keyboard(
+            watch.pk,
+            history.suggestions(points),
+            watch.currency,
+            watch.threshold_price is not None,
+            pref.lang,
+        ),
+    )
+    await callback.answer()
+
+
+async def _store_threshold(pk: int, user_id: str, price: int | None) -> Watch | None:
+    async with get_session() as s:
+        watch = await s.get(Watch, pk)
+        if watch is None or watch.user_id != user_id or not watch.active:
+            return None
+        watch.threshold_price = price
+        s.add(watch)
+        await s.commit()
+    return watch
+
+
+async def _cb_set_threshold(callback: CallbackQuery, state: FSMContext) -> None:
+    """`setthr:<pk>:<price>` — price 0 is the "switch it off" button."""
+    await state.clear()
+    pref = await _pref(callback)
+    _, raw_pk, raw_price = callback.data.split(":", 2)
+    price = int(raw_price) if raw_price.isdigit() else 0
+    watch = await _store_threshold(int(raw_pk), pref.user_id, price or None)
+    if watch is None:
+        await callback.answer(t(pref.lang, "watch_unknown"), show_alert=True)
+        return
+    await callback.answer(
+        t(pref.lang, "thr_set", price=money.format_price(price, watch.currency))
+        if price
+        else t(pref.lang, "thr_cleared")
+    )
+    await _edit(callback.message, _watch_card(watch, pref.lang), menu.watch_keyboard(watch, pref.lang))
 
 
 async def _cmd_list(message: Message) -> None:
@@ -476,7 +644,8 @@ async def _cmd_list(message: Message) -> None:
     await message.answer(text, reply_markup=markup)
 
 
-async def _cb_mine(callback: CallbackQuery) -> None:
+async def _cb_mine(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
     pref = await _pref(callback)
     text, markup = await _watch_list(pref)
     await _edit(callback.message, text, markup)
@@ -652,6 +821,11 @@ def build_dispatcher() -> Dispatcher:
     dp.callback_query.register(_cb_set_currency, F.data.startswith("setcur:"))
     dp.callback_query.register(_cb_set_market, F.data.startswith("setmkt:"))
     dp.callback_query.register(_cb_delete, F.data.startswith("del:"))
+    dp.callback_query.register(_cb_watch_open, F.data.startswith("w:"))
+    dp.callback_query.register(_cb_history, F.data.startswith("hist:"))
+    dp.callback_query.register(_cb_pause, F.data.startswith("pause:"))
+    dp.callback_query.register(_cb_set_threshold, F.data.startswith("setthr:"))
+    dp.callback_query.register(_cb_threshold, F.data.startswith("thr:"))
     dp.callback_query.register(_cb_pick, F.data.startswith("pick:"))
     dp.callback_query.register(_cb_region, F.data.startswith("reg:"))
     dp.callback_query.register(_cb_set, F.data.startswith("set:"))
