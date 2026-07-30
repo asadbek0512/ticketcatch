@@ -100,9 +100,17 @@ def format_board(quotes: list[PriceQuote], route: str, date_label: str, lang: st
     return f"{head}\n\n{format_rows(quotes, lang)}"
 
 
-def format_digest(watch: Watch, cheapest: list[PriceQuote], previous: PriceQuote | None) -> str:
-    """The scheduled card: route header, price-change badge, cheapest options with links."""
-    lang = watch.lang
+def format_digest(
+    watch: Watch, cheapest: list[PriceQuote], previous: PriceQuote | None, lang: str | None = None
+) -> str:
+    """The scheduled card: route header, price-change badge, cheapest options with links.
+
+    `lang` is the user's language *right now*, and it overrides the copy stored on the watch.
+    Currency and market are frozen at creation because they decide the fare, and a history priced
+    two different ways is a lie — but language decides nothing except which words are printed. A
+    user who switches to Russian expects the next digest in Russian, not the language they happened
+    to be using when they created the watch a month ago."""
+    lang = lang or watch.lang
     route = f"{watch.origin} → {watch.destination}"
     when = watch.depart_date.isoformat()
     if watch.return_date:

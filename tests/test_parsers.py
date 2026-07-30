@@ -397,3 +397,19 @@ def test_a_translation_may_contain_a_lang_placeholder():
     for code in ("uz", "ru", "en"):
         text = settings_text(Preference(user_id="1", lang=code))
         assert "{lang}" not in text and "{currency}" not in text and "{market}" not in text
+
+
+def test_changing_language_changes_the_next_digest():
+    from ticketcatch.models import PriceQuote, Watch
+    from ticketcatch.notifier import format_digest
+
+    # The watch was created in Uzbek; the user has since switched to Russian.
+    watch = Watch(user_id="1", depart_date=date.today() + timedelta(days=10), lang="uz")
+    board = [PriceQuote(route_key="r", price=500_000, currency="krw", airline="Asiana")]
+
+    # With no override the watch's own language is still the fallback.
+    assert format_digest(watch, board, None) == format_digest(watch, board, None, lang="uz")
+    assert format_digest(watch, board, None, lang="ru") != format_digest(watch, board, None)
+    assert format_digest(watch, board, None, lang="ru") == format_digest(
+        Watch(user_id="1", depart_date=watch.depart_date, lang="ru"), board, None
+    )

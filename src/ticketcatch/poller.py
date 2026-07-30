@@ -4,7 +4,7 @@ from collections import defaultdict
 from datetime import datetime
 
 from .config import settings
-from .db import active_watches, get_session, init_db, last_cheapest
+from .db import active_watches, get_preference, get_session, init_db, last_cheapest
 from .models import PriceQuote, Watch, route_key, utcnow
 from .notifier import format_digest, send_text
 from .search import fetch_offers
@@ -73,10 +73,14 @@ async def _poll_group(key: tuple[str, str, str], watchers: list[Watch], stats: d
         for row in cheapest:  # persist the new snapshot as price history
             s.add(row)
         await s.commit()
+        # Read each watcher's language at send time rather than trusting the copy on the watch:
+        # switching language in Settings has to change the next digest, not just the menu.
+        langs = {w.user_id: (await get_preference(s, w.user_id)).lang for w in watchers}
 
     for w in watchers:
         try:
-            if await send_text(w.user_id, format_digest(w, cheapest, previous), preview=True):
+            digest = format_digest(w, cheapest, previous, lang=langs.get(w.user_id))
+            if await send_text(w.user_id, digest, preview=True):
                 stats["sent"] += 1
         except Exception as e:
             log.error("notify failed for watch %s: %s", w.pk, e)

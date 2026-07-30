@@ -59,6 +59,8 @@ class Watch(SQLModel, table=True):
     # same way, so changing your currency later must not rewrite the history of an old watch.
     currency: str = Field(default_factory=default_currency)
     market: str = Field(default_factory=default_market)
+    # Language is the exception: only a fallback, since it prices nothing. The digest reads the
+    # user's current language instead, so changing it in Settings changes the next message too.
     lang: str = Field(default_factory=default_lang)
 
 
