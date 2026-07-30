@@ -62,10 +62,10 @@ def _chat(event: Message | CallbackQuery) -> str:
 
 
 async def _pref(event: Message | CallbackQuery) -> Preference:
-    """Preference for whoever triggered this, seeded with their Telegram language when new."""
-    hint = normalize(event.from_user.language_code if event.from_user else None)
+    """Preference for whoever triggered this. New users start in DEFAULT_LANG, not in whatever
+    language their Telegram app happens to be set to."""
     async with get_session() as s:
-        return await get_preference(s, _chat(event), lang_hint=hint)
+        return await get_preference(s, _chat(event))
 
 
 async def _save(pref: Preference) -> None:

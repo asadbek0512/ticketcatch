@@ -73,19 +73,17 @@ async def get_session() -> AsyncIterator[AsyncSession]:
         yield session
 
 
-async def get_preference(
-    session: AsyncSession, user_id: str, lang_hint: str | None = None
-) -> Preference:
+async def get_preference(session: AsyncSession, user_id: str) -> Preference:
     """The user's current menu selection, created with defaults the first time they open it.
 
-    lang_hint is Telegram's client language, used only at creation: a new user should see their
-    own language immediately, but someone who later picked a language in Settings keeps it."""
+    Everyone starts in DEFAULT_LANG and changes it in Settings if they want to. Seeding from
+    Telegram's client language sounded helpful and wasn't: this bot's users are Uzbek, plenty of
+    them run their phone in Russian, and the bot would greet them in a language they never chose
+    and might not read. A default they can see and change beats a guess made on their behalf."""
     rows = await session.exec(select(Preference).where(Preference.user_id == user_id))
     pref = rows.first()
     if pref is None:
         pref = Preference(user_id=user_id)
-        if lang_hint:
-            pref.lang = lang_hint
         session.add(pref)
         await session.commit()
         await session.refresh(pref)

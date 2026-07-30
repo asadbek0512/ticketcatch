@@ -459,3 +459,16 @@ def test_an_unknown_zone_costs_accuracy_not_a_crash():
     from ticketcatch import schedule
 
     assert schedule.local_time(_utc(7), "Mars/Olympus").hour == 7  # falls back to UTC
+
+
+def test_a_new_user_starts_in_the_default_language():
+    """Not in whatever language their Telegram client is set to — a Russian-language phone in
+    Tashkent is common, and guessing from it greeted people in a language they never chose."""
+    import inspect
+
+    from ticketcatch.db import get_preference
+    from ticketcatch.models import Preference
+    from ticketcatch.config import settings
+
+    assert "lang_hint" not in inspect.signature(get_preference).parameters
+    assert Preference(user_id="new").lang == settings.default_lang
