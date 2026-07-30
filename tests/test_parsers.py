@@ -383,3 +383,17 @@ def test_naive_timestamps_from_sqlite_do_not_break_the_age():
     # SQLite hands back naive datetimes even though we write aware ones; subtracting the two
     # shapes raises unless _ago normalises first.
     assert _ago(dt.utcnow() - timedelta(hours=2), "en") == "2h ago"
+
+
+def test_a_translation_may_contain_a_lang_placeholder():
+    from ticketcatch.i18n import t
+    from ticketcatch.menu import settings_text
+    from ticketcatch.models import Preference
+
+    # "🌐 Til: {lang}" — the settings screen names the language, so the kwarg is called lang.
+    # Before t()'s parameters were positional-only this raised TypeError and killed /sozlama.
+    assert t("uz", "settings_title", lang="O'zbek", currency="KRW", market="Koreya")
+
+    for code in ("uz", "ru", "en"):
+        text = settings_text(Preference(user_id="1", lang=code))
+        assert "{lang}" not in text and "{currency}" not in text and "{market}" not in text

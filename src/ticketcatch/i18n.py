@@ -581,8 +581,13 @@ def normalize(lang: str | None) -> str:
     return code if code in LANGS else DEFAULT
 
 
-def t(lang: str, key: str, **kwargs) -> str:
-    """Translate. Falls back to Uzbek, then to the key itself — never crashes a handler."""
+def t(lang: str, key: str, /, **kwargs) -> str:
+    """Translate. Falls back to Uzbek, then to the key itself — never crashes a handler.
+
+    lang and key are positional-only on purpose: a translation is free to contain a {lang} or
+    {key} placeholder, and without the `/` that kwarg collides with this function's own parameter
+    and raises TypeError. That is exactly how the settings screen died — the one screen whose text
+    naturally says "Language: {lang}"."""
     table = LANGS.get(normalize(lang), UZ)
     text = table.get(key) or UZ.get(key) or key
     if not kwargs:
