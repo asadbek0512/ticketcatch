@@ -9,7 +9,7 @@ from datetime import date, timedelta
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from . import airports, money
+from . import airports, money, schedule
 from .i18n import LANG_NAMES, day_label, t
 from .models import Preference, Watch
 
@@ -20,6 +20,7 @@ RETURN_CHOICES = 14  # return dates offered, counted from the outbound day
 DATE_COLUMNS = 2
 CURRENCY_COLUMNS = 3
 MARKET_COLUMNS = 2
+NOTIFY_COLUMNS = 2  # '09:00 · 21:00' is wide — two per row still fits a narrow phone
 FIELDS = ("origin", "destination", "depart")
 
 
@@ -332,6 +333,11 @@ def history_keyboard(pk: int, lang: str) -> InlineKeyboardMarkup:
 # --- settings ----------------------------------------------------------------------------------
 
 
+def tz_label(name: str) -> str:
+    """'Asia/Seoul' → 'Seoul'. The region prefix is filing, not information."""
+    return name.split("/")[-1].replace("_", " ")
+
+
 def settings_text(pref: Preference) -> str:
     return t(
         pref.lang,
@@ -339,6 +345,8 @@ def settings_text(pref: Preference) -> str:
         lang=LANG_NAMES.get(pref.lang, pref.lang),
         currency=money.currency_label(pref.currency),
         market=money.market_label(pref.market, pref.lang),
+        times=schedule.slot_label(pref.notify_hour),
+        tz=tz_label(pref.tz),
     )
 
 
@@ -349,10 +357,45 @@ def settings_keyboard(lang: str) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text=t(lang, "btn_lang"), callback_data="cfg:lang"),
                 InlineKeyboardButton(text=t(lang, "btn_currency"), callback_data="cfg:cur"),
             ],
-            [InlineKeyboardButton(text=t(lang, "btn_market"), callback_data="cfg:mkt")],
+            [
+                InlineKeyboardButton(text=t(lang, "btn_market"), callback_data="cfg:mkt"),
+                InlineKeyboardButton(text=t(lang, "btn_notify"), callback_data="cfg:time"),
+            ],
             _back(lang),
         ]
     )
+
+
+def notify_keyboard(pref: Preference) -> InlineKeyboardMarkup:
+    """Morning hours, with the current one marked. Each button shows both slots, because that is
+    what the choice actually buys: "09:00 · 21:00", not "9"."""
+    buttons = [
+        InlineKeyboardButton(
+            text=("✅ " if h == pref.notify_hour else "") + schedule.slot_label(h),
+            callback_data=f"setnotify:{h}",
+        )
+        for h in schedule.HOUR_CHOICES
+    ]
+    rows = _rows(buttons, NOTIFY_COLUMNS)
+    rows.append([InlineKeyboardButton(text=t(pref.lang, "btn_tz"), callback_data="cfg:tz")])
+    rows.append(_back(pref.lang, "cfg"))
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def tz_keyboard(pref: Preference) -> InlineKeyboardMarkup:
+    """The same country list as the market picker, but answering a different question: where the
+    user *is*, not where they buy. Usually the same country, which is why market seeds it."""
+    buttons = [
+        InlineKeyboardButton(
+            text=("✅ " if schedule.tz_for_market(m.code) == pref.tz else "")
+            + f"{m.flag} {m.name(pref.lang)}",
+            callback_data=f"settz:{m.code}",
+        )
+        for m in money.MARKETS
+    ]
+    rows = _rows(buttons, MARKET_COLUMNS)
+    rows.append(_back(pref.lang, "cfg:time"))
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def lang_keyboard(lang: str) -> InlineKeyboardMarkup:

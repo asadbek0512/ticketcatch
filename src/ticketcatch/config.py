@@ -26,7 +26,9 @@ class Settings(BaseSettings):
     currency: str = "krw"
     market: str = "kr"
     default_lang: str = "uz"
-    poll_interval_seconds: int = 43200  # 12h — twice a day
+    # How often the poller wakes to ask "is anyone due?". Not how often anyone is priced: each
+    # watch is still checked twice a day, at the hour its owner picked in Settings.
+    poll_tick_seconds: int = 900  # 15min
     top_n: int = 3  # how many cheapest options to show per watch
     dry_run: bool = True  # True = log the digest, never send to Telegram
 

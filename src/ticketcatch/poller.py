@@ -3,6 +3,7 @@ import logging
 from collections import defaultdict
 from datetime import datetime
 
+from . import schedule
 from .config import settings
 from .db import active_watches, get_preference, get_session, init_db, last_cheapest
 from .models import PriceQuote, Watch, route_key, utcnow
@@ -87,15 +88,44 @@ async def _poll_group(key: tuple[str, str, str], watchers: list[Watch], stats: d
             stats["errors"] += 1
 
 
-async def poll_once() -> dict:
-    """One full cycle: every distinct route+market fetched once, then fanned out to its watchers."""
+async def _due_watches(watches: list[Watch]) -> list[Watch]:
+    """The watches whose owner's delivery hour has come round. Everything else costs nothing this
+    tick: not scraped, not sent, not woken up."""
+    due: list[Watch] = []
+    now = utcnow()
+    async with get_session() as s:
+        for w in watches:
+            pref = await get_preference(s, w.user_id)
+            if schedule.is_due(now, pref.tz, pref.notify_hour, w.last_sent_at):
+                due.append(w)
+    return due
+
+
+async def _mark_sent(watches: list[Watch]) -> None:
+    """Remember that this slot has been served, so the remaining ticks of the same hour stay quiet."""
+    now = utcnow()
+    async with get_session() as s:
+        for w in watches:
+            w.last_sent_at = now
+            s.add(w)
+        await s.commit()
+
+
+async def poll_once(only_due: bool = False) -> dict:
+    """One full cycle: every distinct route+market fetched once, then fanned out to its watchers.
+
+    only_due is what the loop uses — each user hears from us at their own hour. A manual
+    `python -m ticketcatch poll` ignores the schedule, because someone running it by hand is
+    asking for prices now."""
     await init_db()
     stats = {"routes": 0, "offers": 0, "sent": 0, "errors": 0}
 
     async with get_session() as s:
         watches = await active_watches(s)
+    if only_due:
+        watches = await _due_watches(watches)
     if not watches:
-        log.info("no active watches")
+        log.info("no watches due" if only_due else "no active watches")
         return stats
 
     by_group: dict[tuple[str, str, str], list[Watch]] = defaultdict(list)
@@ -113,14 +143,19 @@ async def poll_once() -> dict:
             await _poll_group(key, watchers, stats)
 
     await asyncio.gather(*(guarded(k, v) for k, v in by_group.items()))
+    await _mark_sent(watches)
     log.info("poll done: %s", stats)
     return stats
 
 
 async def loop() -> None:
+    """Wake often, work rarely. The tick is short so that a delivery hour is never missed by more
+    than one tick; the actual scraping still happens twice a day per watch, at the hour its owner
+    chose. Sleeping for twelve hours instead would tie everyone's digest to whenever this process
+    was last restarted, which is how prices used to arrive at four in the morning."""
     while True:
         try:
-            await poll_once()
+            await poll_once(only_due=True)
         except Exception as e:
             log.exception("poll cycle crashed: %s", e)
-        await asyncio.sleep(settings.poll_interval_seconds)
+        await asyncio.sleep(settings.poll_tick_seconds)

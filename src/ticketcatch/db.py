@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel, asc, desc, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from . import schedule
 from .config import settings
 from .models import Preference, PriceQuote, SearchCache, Watch, utcnow
 from .sources import Quote
@@ -39,6 +40,7 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "lang": f"TEXT DEFAULT '{settings.default_lang}'",
         "return_date": "DATE",
         "paused": "BOOLEAN DEFAULT 0",
+        "last_sent_at": "DATETIME",
     },
     "preference": {
         "lang": f"TEXT DEFAULT '{settings.default_lang}'",
@@ -46,6 +48,8 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "market": f"TEXT DEFAULT '{settings.market.lower()}'",
         "searches": "INTEGER DEFAULT 0",
         "return_date": "DATE",
+        "notify_hour": f"INTEGER DEFAULT {schedule.DEFAULT_HOUR}",
+        "tz": f"TEXT DEFAULT '{schedule.tz_for_market(settings.market)}'",
     },
 }
 

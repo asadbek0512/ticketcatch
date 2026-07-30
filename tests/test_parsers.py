@@ -413,3 +413,49 @@ def test_changing_language_changes_the_next_digest():
     assert format_digest(watch, board, None, lang="ru") == format_digest(
         Watch(user_id="1", depart_date=watch.depart_date, lang="ru"), board, None
     )
+
+
+# --- delivery schedule --------------------------------------------------------------------------
+
+
+def _utc(hour: int):
+    from datetime import datetime as dt
+    from datetime import timezone as tz
+
+    return dt(2026, 8, 1, hour, 0, tzinfo=tz.utc)
+
+
+def test_the_evening_slot_is_the_morning_one_twelve_hours_later():
+    from ticketcatch import schedule
+
+    assert schedule.slots(9) == (9, 21)
+    assert schedule.slots(21) == (21, 9)  # wraps past midnight
+    assert schedule.slot_label(9) == "09:00 · 21:00"
+
+
+def test_a_brand_new_watch_does_not_wait_for_its_slot():
+    from ticketcatch import schedule
+
+    assert schedule.is_due(_utc(3), "Asia/Seoul", 9, last_sent_at=None)
+
+
+def test_a_watch_is_served_at_the_users_local_hour_not_ours():
+    from ticketcatch import schedule
+
+    yesterday = _utc(0) - timedelta(hours=20)
+    # 00:00 UTC is 09:00 in Seoul and 05:00 in Tashkent: the same tick is due for one, not the other.
+    assert schedule.is_due(_utc(0), "Asia/Seoul", 9, yesterday)
+    assert not schedule.is_due(_utc(0), "Asia/Tashkent", 9, yesterday)
+
+
+def test_the_same_slot_is_not_served_twice():
+    from ticketcatch import schedule
+
+    just_sent = _utc(0) - timedelta(minutes=30)  # an earlier tick of the same hour
+    assert not schedule.is_due(_utc(0), "Asia/Seoul", 9, just_sent)
+
+
+def test_an_unknown_zone_costs_accuracy_not_a_crash():
+    from ticketcatch import schedule
+
+    assert schedule.local_time(_utc(7), "Mars/Olympus").hour == 7  # falls back to UTC

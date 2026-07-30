@@ -11,7 +11,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand, CallbackQuery, Message
 
-from . import airports, history, menu, money
+from . import airports, history, menu, money, schedule
 from .config import settings
 from .db import (
     counts,
@@ -36,6 +36,7 @@ _DATE_FMT = "%Y-%m-%d"
 _RESULT_LIMIT = 8
 _MAX_WATCHES = 10  # a watch costs a search twice a day; this is generosity, not a wall
 _MAX_LEAD_DAYS = 335  # airlines sell ~11 months out — beyond that every source returns nothing
+HOURS_IN_DAY = 24
 
 _searching = Cooldown(settings.search_cooldown_seconds)
 
@@ -844,14 +845,21 @@ async def _cmd_add(message: Message, command: CommandObject) -> None:
 
 
 async def _cb_settings(callback: CallbackQuery) -> None:
-    """`cfg` is the settings screen; `cfg:lang` / `cfg:cur` / `cfg:mkt` are its three lists."""
+    """`cfg` is the settings screen; `cfg:lang` / `cfg:cur` / `cfg:mkt` / `cfg:time` / `cfg:tz`
+    are its lists."""
     pref = await _pref(callback)
     section = callback.data.split(":", 1)[1] if ":" in callback.data else ""
+    times = schedule.slot_label(pref.notify_hour)
     screens = {
         "": (menu.settings_text(pref), menu.settings_keyboard(pref.lang)),
         "lang": (t(pref.lang, "ask_lang"), menu.lang_keyboard(pref.lang)),
         "cur": (t(pref.lang, "ask_currency"), menu.currency_keyboard(pref.lang)),
         "mkt": (t(pref.lang, "ask_market"), menu.market_keyboard(pref.lang)),
+        "time": (
+            t(pref.lang, "ask_notify", times=times, tz=menu.tz_label(pref.tz)),
+            menu.notify_keyboard(pref),
+        ),
+        "tz": (t(pref.lang, "ask_tz", tz=menu.tz_label(pref.tz)), menu.tz_keyboard(pref)),
     }
     text, markup = screens.get(section, screens[""])
     await _edit(callback.message, text, markup)
@@ -878,8 +886,14 @@ async def _cb_set_market(callback: CallbackQuery) -> None:
     """Changing the country also moves the currency: nobody picks 'Uzbekistan' and means 'in won'.
     They can still override it afterwards in the currency list."""
     pref = await _pref(callback)
+    previous = pref.market
     pref.market = callback.data.split(":", 1)[1].lower()
     pref.currency = money.currency_for(pref.market)
+    # The clock follows too, but only while it was still the one the old country implied: a user
+    # who deliberately set their zone is telling us where they are, and buying a ticket from
+    # somewhere else does not move them.
+    if pref.tz == schedule.tz_for_market(previous):
+        pref.tz = schedule.tz_for_market(pref.market)
     await _save(pref)
     await _edit(callback.message, menu.settings_text(pref), menu.settings_keyboard(pref.lang))
     await callback.answer(
@@ -888,6 +902,33 @@ async def _cb_set_market(callback: CallbackQuery) -> None:
             "market_note",
             market=money.market_label(pref.market, pref.lang),
             currency=pref.currency.upper(),
+        )
+    )
+
+
+async def _cb_set_notify(callback: CallbackQuery) -> None:
+    """Pick the morning hour. Existing watches are not re-timed by hand: last_sent_at already says
+    when each was last served, so the new hour simply decides which slot comes next."""
+    pref = await _pref(callback)
+    pref.notify_hour = int(callback.data.split(":", 1)[1]) % HOURS_IN_DAY
+    await _save(pref)
+    await _edit(callback.message, menu.settings_text(pref), menu.settings_keyboard(pref.lang))
+    await callback.answer(
+        t(pref.lang, "notify_saved", times=schedule.slot_label(pref.notify_hour))
+    )
+
+
+async def _cb_set_tz(callback: CallbackQuery) -> None:
+    pref = await _pref(callback)
+    pref.tz = schedule.tz_for_market(callback.data.split(":", 1)[1])
+    await _save(pref)
+    await _edit(callback.message, menu.settings_text(pref), menu.settings_keyboard(pref.lang))
+    await callback.answer(
+        t(
+            pref.lang,
+            "tz_saved",
+            tz=menu.tz_label(pref.tz),
+            times=schedule.slot_label(pref.notify_hour),
         )
     )
 
@@ -919,6 +960,8 @@ def build_dispatcher() -> Dispatcher:
     dp.callback_query.register(_cb_set_lang, F.data.startswith("setlang:"))
     dp.callback_query.register(_cb_set_currency, F.data.startswith("setcur:"))
     dp.callback_query.register(_cb_set_market, F.data.startswith("setmkt:"))
+    dp.callback_query.register(_cb_set_notify, F.data.startswith("setnotify:"))
+    dp.callback_query.register(_cb_set_tz, F.data.startswith("settz:"))
     dp.callback_query.register(_cb_delete, F.data.startswith("del:"))
     dp.callback_query.register(_cb_watch_open, F.data.startswith("w:"))
     dp.callback_query.register(_cb_watch_search, F.data.startswith("wgo:"))

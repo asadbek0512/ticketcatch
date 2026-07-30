@@ -2,6 +2,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from sqlmodel import Field, SQLModel
 
+from . import schedule
 from .config import settings
 
 DEFAULT_LEAD_DAYS = 30  # a first-time menu opens on a date far enough out to have fares
@@ -25,6 +26,11 @@ def default_currency() -> str:
 
 def default_market() -> str:
     return settings.market.lower()
+
+
+def default_tz() -> str:
+    """The zone that goes with the default market — nobody should have to set this by hand."""
+    return schedule.tz_for_market(settings.market)
 
 
 def route_key(origin: str, destination: str, depart: date, ret: date | None = None) -> str:
@@ -54,6 +60,9 @@ class Watch(SQLModel, table=True):
     # messages for a while" would throw away the very history that makes "↓ cheaper" meaningful.
     paused: bool = Field(default=False, index=True)
     created_at: datetime = Field(default_factory=utcnow)
+    # When this watch last went out. The delivery slot is per user, so "have we sent today" has to
+    # be remembered per watch — a shared "last poll" clock would skip whoever joined mid-cycle.
+    last_sent_at: datetime | None = Field(default=None, index=True)
     # Copied off the user's Preference when the watch is created, not read live: the alert
     # "↓ 40,000 KRW cheaper" only means anything if every capture of this watch is priced the
     # same way, so changing your currency later must not rewrite the history of an old watch.
@@ -78,6 +87,10 @@ class Preference(SQLModel, table=True):
     currency: str = Field(default_factory=default_currency)
     market: str = Field(default_factory=default_market)  # country the ticket is bought from
     searches: int = 0  # how many live searches this user has run — feeds /stats, not billing
+    # When the twice-a-day digest arrives, in the user's own clock. The evening slot is this hour
+    # plus SLOT_GAP_HOURS, so there is one setting to understand instead of two.
+    notify_hour: int = schedule.DEFAULT_HOUR
+    tz: str = Field(default_factory=default_tz)
 
 
 class PriceQuote(SQLModel, table=True):

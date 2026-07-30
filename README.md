@@ -41,7 +41,7 @@ cp .env.example .env             # fill TELEGRAM_BOT_TOKEN (sources need no key)
 ```bash
 python -m ticketcatch bot        # run the Telegram bot (user adds watches)
 python -m ticketcatch poll       # one price-check cycle (DRY_RUN logs, doesn't send)
-python -m ticketcatch loop       # continuous — checks every POLL_INTERVAL_SECONDS (12h)
+python -m ticketcatch loop       # continuous — serves each user at their own hour
 uv run pytest tests -q           # parser / i18n / airport / dedupe tests
 ```
 
@@ -54,7 +54,7 @@ In production the bot and the loop run as two processes (e.g. pm2 on the OCI ser
 | `/start` | Welcome card → the search panel |
 | `/qidir` | The panel: from / to / date / return / search / watch |
 | `/list` | Active watches — tap one to open its history, alert and pause |
-| `/sozlama` | Language, currency, market |
+| `/sozlama` | Language, currency, market, delivery time and time zone |
 | `/help` | How it works, in the user's language |
 | `/stats` | Owner-only: users, watches, quotes, searches |
 
@@ -65,6 +65,7 @@ In production the bot and the loop run as two processes (e.g. pm2 on the OCI ser
 | `bot.py` | Aiogram — commands, callbacks, free-text airport search |
 | `menu.py` | Inline menu — panel, pickers, return dates, calendar strip, watch screens, settings |
 | `history.py` | A watch's stored prices → sparkline + "book now or wait" (pure, no I/O) |
+| `schedule.py` | Whose digest is due on this tick — local hour, slots, tz (pure, no I/O) |
 | `i18n.py` | uz/ru/en tables, months, weekdays, country names; `t(lang, key, **kw)` |
 | `airports.py` | ~140 airports in 8 regions; ranked fuzzy `search()` |
 | `money.py` | Markets (point of sale) vs currencies, price formatting |
@@ -106,6 +107,21 @@ fresher one — every stored price is stamped with how old it is (`ago_label`), 
 search for people who want one. The digest, the on-demand board and the stored board all render
 through `notifier.format_rows`, so the same prices read identically however you arrived at them.
 
+**The digest arrives at an hour the reader is awake.** The loop used to sleep for the whole
+interval, so the delivery time was whenever the process last restarted — 4am after an unlucky
+deploy. Now it ticks every `POLL_TICK_SECONDS` and asks `schedule.is_due()` per watch: each user
+picks a morning hour in their own time zone, the evening slot is that hour plus twelve, and
+`Watch.last_sent_at` is what stops the remaining ticks of the same hour from sending again. The
+work is still twice a day per watch; only the timing became the user's. A brand-new watch is due
+immediately — someone who just added a route should not wait until tomorrow to see if it was
+worth adding. Time zone is seeded from the market (you usually buy where you live) and stops
+following it the moment the user sets it themselves.
+
+**Language is read at send time, currency is frozen.** Currency and market decide the fare, so a
+watch keeps the ones it was created with — a history priced two ways is a lie. Language decides
+nothing but which words are printed, so the digest reads it from the user's current Preference:
+switching to Russian in Settings has to change the next message, not just the menu.
+
 **Pause is its own column.** `active=False` means deleted; `paused=True` keeps the watch and its
 history but takes it out of `active_watches()`. Reusing one flag for both would mean stopping the
 messages for a week destroys the price history that makes "↓ cheaper" possible.
@@ -144,6 +160,7 @@ Beyond `TELEGRAM_BOT_TOKEN`, the knobs that matter (see `.env.example`):
 | `CURRENCY` / `MARKET` | `krw` / `kr` | Default point of sale |
 | `BROWSER_CONCURRENCY` | `3` | Simultaneous browser pages (RAM ceiling) |
 | `ROUTE_CONCURRENCY` | `4` | Routes polled at once |
+| `POLL_TICK_SECONDS` | `900` | How often the poller asks "is anyone due?" |
 | `CACHE_TTL_SECONDS` | `1800` | How long a searched route+day stays cached |
 | `SEARCH_COOLDOWN_SECONDS` | `60` | Per-user gap between manual searches |
 
