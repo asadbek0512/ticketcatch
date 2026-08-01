@@ -12,7 +12,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from . import schedule
 from .config import settings
-from .models import Preference, PriceQuote, SearchCache, Watch, utcnow
+from .models import DealPost, Preference, PriceQuote, SearchCache, Watch, utcnow
 from .sources import Quote
 
 _db_path = Path(settings.db_path)
@@ -22,6 +22,7 @@ engine = create_async_engine(f"sqlite+aiosqlite:///{_db_path}", echo=False)
 _session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 CACHE_SWEEP_FACTOR = 4  # rows older than this many TTLs are dead weight, not a fallback
+MIN_HISTORY_FOR_TYPICAL = 4  # captures needed before "this is cheap" is a claim rather than a guess
 
 # Columns added after a table already shipped. create_all() only creates missing *tables*, so
 # live databases need these bolted on by hand — quoted defaults because SQLite writes them into
@@ -41,6 +42,7 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "return_date": "DATE",
         "paused": "BOOLEAN DEFAULT 0",
         "last_sent_at": "DATETIME",
+        "alerted_price": "INTEGER",
     },
     "preference": {
         "lang": f"TEXT DEFAULT '{settings.default_lang}'",
@@ -131,6 +133,58 @@ async def active_watches(session: AsyncSession) -> list[Watch]:
         select(Watch).where(Watch.active == True, Watch.paused == False)  # noqa: E712
     )
     return list(rows.all())
+
+
+async def alerting_watches(session: AsyncSession) -> list[Watch]:
+    """Watches with a target price on them. These are the only ones worth checking between digests:
+    the user has said, in a number, what would make them want to hear from us out of turn."""
+    rows = await session.exec(
+        select(Watch).where(
+            Watch.active == True,  # noqa: E712
+            Watch.paused == False,  # noqa: E712
+            Watch.threshold_price != None,  # noqa: E711
+        )
+    )
+    return list(rows.all())
+
+
+async def recent_deal(session: AsyncSession, rkey: str, within_hours: int) -> DealPost | None:
+    """The last time this route was announced publicly, if it was announced recently."""
+    cutoff = utcnow() - timedelta(hours=within_hours)
+    rows = await session.exec(
+        select(DealPost)
+        .where(DealPost.route_key == rkey, DealPost.posted_at >= cutoff)
+        .order_by(desc(DealPost.posted_at))
+        .limit(1)
+    )
+    return rows.first()
+
+
+async def record_deal(session: AsyncSession, rkey: str, price: int, currency: str) -> None:
+    session.add(DealPost(route_key=rkey, price=price, currency=currency))
+    await session.commit()
+
+
+async def typical_price(
+    session: AsyncSession, rkey: str, currency: str, limit: int = 10
+) -> int | None:
+    """The middle of what this route has recently cost — the yardstick a "deal" is measured against.
+
+    The median, not the average: one 2am mistake fare would drag a mean down far enough to make
+    every ordinary price afterwards look like a bargain. Returns None until there is enough history
+    to have an opinion, because calling the second price we ever saw a discount is guesswork."""
+    rows = await session.exec(
+        select(func.min(PriceQuote.price))
+        .where(PriceQuote.route_key == rkey, PriceQuote.currency == currency)
+        .group_by(PriceQuote.captured_at)
+        .order_by(desc(PriceQuote.captured_at))
+        .limit(limit)
+    )
+    prices = sorted(int(p) for (p,) in rows.all())
+    if len(prices) < MIN_HISTORY_FOR_TYPICAL:
+        return None
+    middle = len(prices) // 2
+    return prices[middle] if len(prices) % 2 else (prices[middle - 1] + prices[middle]) // 2
 
 
 async def user_watches(session: AsyncSession, user_id: str) -> list[Watch]:

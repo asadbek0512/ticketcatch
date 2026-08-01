@@ -29,6 +29,16 @@ class Settings(BaseSettings):
     # How often the poller wakes to ask "is anyone due?". Not how often anyone is priced: each
     # watch is still checked twice a day, at the hour its owner picked in Settings.
     poll_tick_seconds: int = 900  # 15min
+    # A watch with a target price is also checked between digests, so "under 400,000" arrives when
+    # it happens rather than the next morning. Only the fast JSON source is asked, so this costs one
+    # HTTP request per route — running the browser sources this often would not be affordable.
+    alert_scan_seconds: int = 3600  # 1h
+    # Where genuinely good fares are announced publicly: a channel id like "@ticketcatch_deals" or
+    # "-1001234567890". Empty means the bot has no public face and posts nothing.
+    deals_channel_id: str = ""
+    # How far under a route's usual price a fare must be before it is worth a stranger's attention.
+    deal_discount_percent: int = 15
+    deal_repeat_hours: int = 24  # don't announce the same route again inside this window
     top_n: int = 3  # how many cheapest options to show per watch
     dry_run: bool = True  # True = log the digest, never send to Telegram
 

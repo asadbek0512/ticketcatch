@@ -511,3 +511,112 @@ def test_a_board_older_than_the_threshold_is_refreshed():
 def test_the_refresh_hint_exists_in_every_language():
     for lang in LANGS:
         assert t(lang, "refreshing")
+
+
+# --- target-price alerts ------------------------------------------------------------------------
+
+
+def test_a_fare_crossing_the_target_is_announced_once():
+    from ticketcatch.poller import RESET, SEND, SKIP, alert_decision
+
+    assert alert_decision(400_000, None, 380_000) == SEND  # first time under: news
+    assert alert_decision(400_000, 380_000, 380_000) == SKIP  # same fare an hour later: not news
+    assert alert_decision(400_000, 380_000, 390_000) == SKIP  # still under, but worse: not news
+    assert alert_decision(400_000, 380_000, 350_000) == SEND  # cheaper than what we promised: news
+
+
+def test_a_fare_going_back_up_re_arms_the_alert():
+    """Without the reset, one dip would silence the watch forever — every later drop would look
+    like a repeat of the fare we already mentioned."""
+    from ticketcatch.poller import RESET, SEND, alert_decision
+
+    assert alert_decision(400_000, 380_000, 450_000) == RESET
+    assert alert_decision(400_000, None, 380_000) == SEND  # ...and the next dip is news again
+
+
+def test_a_watch_without_a_target_is_never_alerted():
+    from ticketcatch.poller import SKIP, alert_decision
+
+    assert alert_decision(None, None, 1) == SKIP
+
+
+def test_a_discount_is_never_overstated():
+    from ticketcatch.notifier import discount_percent
+
+    assert discount_percent(500_000, 400_000) == 20
+    assert discount_percent(500_000, 500_000) == 0  # the usual price is not a deal
+    assert discount_percent(500_000, 600_000) == 0  # nor is a dearer one
+    assert discount_percent(0, 400_000) == 0  # no history, no claim
+    assert discount_percent(300_000, 299_999) == 0  # rounds down, so 0.3% never reads as 1%
+
+
+# --- inline mode --------------------------------------------------------------------------------
+
+
+def test_inline_reads_a_route_off_a_half_typed_query():
+    from ticketcatch.bot import _INLINE_LEAD_DAYS, parse_inline
+
+    assert parse_inline("icn tas")[:2] == ("ICN", "TAS")
+    assert parse_inline("ICN TAS")[2] == date.today() + timedelta(days=_INLINE_LEAD_DAYS)
+    assert parse_inline("ICN, TAS 2027-01-15")[2] == date(2027, 1, 15)
+
+
+def test_inline_stays_quiet_until_the_query_is_actually_a_route():
+    """Results appear as the user types in someone else's group chat. Guessing there is worse than
+    saying nothing: half a query is not a request."""
+    from ticketcatch.bot import parse_inline
+
+    assert parse_inline("") is None
+    assert parse_inline("ICN") is None  # still typing
+    assert parse_inline("Seoul Tashkent") is None  # city names are for inside the bot
+    assert parse_inline("ICN ICN") is None  # a flight to where you already are
+    assert parse_inline("ICN TAS notadate") is None
+    assert parse_inline("ICN TAS 2001-01-01") is None  # a date that has already happened
+
+
+def test_what_share_writes_is_what_inline_reads():
+    """The share button and the inline parser are two halves of one feature: whatever the button
+    hands to Telegram has to come back through parse_inline as the same route."""
+    from ticketcatch.bot import parse_inline
+    from ticketcatch.menu import share_button
+
+    when = date.today() + timedelta(days=60)
+    query = share_button("ICN", "TAS", when, "uz").switch_inline_query
+    assert parse_inline(query) == ("ICN", "TAS", when)
+
+
+def test_the_first_screen_offers_real_routes_not_a_form():
+    """A stranger who opens the bot should be one tap from a price. Every route button has to carry
+    a route the callback can actually act on — a typo here is a dead button on the first screen."""
+    from ticketcatch.menu import POPULAR_ROUTES, start_keyboard
+
+    routes = [
+        b.callback_data
+        for row in start_keyboard("uz").inline_keyboard
+        for b in row
+        if b.callback_data.startswith("route:")
+    ]
+    assert len(routes) == len(POPULAR_ROUTES)
+    for data in routes:
+        _, origin, destination = data.split(":")
+        assert airports.is_iata(origin) and airports.is_iata(destination)
+        assert origin != destination
+
+
+def test_a_shared_link_opens_on_the_shared_route():
+    """The inline footer writes a /start payload; /start reads it. If these two ever disagree, a
+    shared price becomes a greeting screen and the whole share loop is broken."""
+    from ticketcatch.bot import deeplink_payload, parse_deeplink
+
+    when = date.today() + timedelta(days=45)
+    assert parse_deeplink(deeplink_payload("ICN", "TAS", when)) == ("ICN", "TAS", when)
+
+
+def test_a_broken_link_is_treated_as_no_link():
+    """Junk after /start must fall through to the normal welcome, never to an error."""
+    from ticketcatch.bot import parse_deeplink
+
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    for payload in ("", None, "hello", "ICN-TAS", "ICN-TAS-nope", "ICN-ICN-2030-01-01",
+                    f"ICN-TAS-{yesterday}"):
+        assert parse_deeplink(payload) is None

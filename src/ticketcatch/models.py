@@ -55,6 +55,10 @@ class Watch(SQLModel, table=True):
     # outbound flown one way — never fold the two together.
     return_date: date | None = Field(default=None, index=True)
     threshold_price: int | None = None  # fire a special alert when the cheapest drops below this
+    # The price this watch was last alerted at, so a fare that sits under the threshold for a week
+    # is announced once instead of every hour. Cleared when the price climbs back above the
+    # threshold, which is what makes the next drop news again.
+    alerted_price: int | None = None
     active: bool = Field(default=True, index=True)  # False = deleted; the row stays for history
     # Paused keeps the watch and its price history but stops the polling. Deleting to "stop the
     # messages for a while" would throw away the very history that makes "↓ cheaper" meaningful.
@@ -124,3 +128,17 @@ class SearchCache(SQLModel, table=True):
     cache_key: str = Field(index=True)  # route + currency + market — prices differ by all three
     payload: str = ""  # JSON list of Quote dicts
     created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class DealPost(SQLModel, table=True):
+    """A fare already announced in the public channel.
+
+    Without this the channel would repeat the same bargain at every poll, which is how a deals feed
+    becomes a feed nobody opens. A route reappears only when it beats what was posted before, or
+    when enough time has passed that the old post has scrolled out of anyone's life."""
+
+    pk: int | None = Field(default=None, primary_key=True)
+    route_key: str = Field(index=True)
+    price: int = 0
+    currency: str = ""
+    posted_at: datetime = Field(default_factory=utcnow, index=True)

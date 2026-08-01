@@ -6,9 +6,19 @@ from pathlib import Path
 
 from . import schedule
 from .config import settings
-from .db import active_watches, get_preference, get_session, init_db, last_cheapest
+from .db import (
+    active_watches,
+    alerting_watches,
+    get_preference,
+    get_session,
+    init_db,
+    last_cheapest,
+    recent_deal,
+    record_deal,
+    typical_price,
+)
 from .models import PriceQuote, Watch, route_key, utcnow
-from .notifier import format_digest, send_text
+from .notifier import discount_percent, format_alert, format_deal, format_digest, send_text
 from .search import fetch_offers
 from .sources import Quote, SearchOpts
 
@@ -88,6 +98,11 @@ async def _poll_group(key: tuple[str, str, str], watchers: list[Watch], stats: d
             log.error("notify failed for watch %s: %s", w.pk, e)
             stats["errors"] += 1
 
+    try:
+        await _announce(rkey, first, cheapest)
+    except Exception as e:  # the channel is a nice-to-have; it never breaks someone's digest
+        log.warning("deal announce failed %s: %s", rkey, e)
+
 
 async def _due_watches(watches: list[Watch]) -> list[Watch]:
     """The watches whose owner's delivery hour has come round. Everything else costs nothing this
@@ -149,6 +164,125 @@ async def poll_once(only_due: bool = False) -> dict:
     return stats
 
 
+async def _announce(rkey: str, watch: Watch, rows: list[PriceQuote]) -> None:
+    """Post a genuinely good fare to the public channel, if there is one and it is genuinely good.
+
+    Every guard here answers the same question — would a stranger be glad this arrived? A price is
+    only news against a route's own history, so a route with no history is never announced; a
+    channel that reposts the same bargain every twelve hours is a channel people mute; and a fare
+    that isn't clearly under the usual is just a price, which nobody subscribed for."""
+    if not settings.deals_channel_id:
+        return
+    best = rows[0]
+    async with get_session() as s:
+        typical = await typical_price(s, rkey, best.currency)
+        if typical is None:
+            return
+        if discount_percent(typical, best.price) < settings.deal_discount_percent:
+            return
+        posted = await recent_deal(s, rkey, settings.deal_repeat_hours)
+        if posted is not None and best.price >= posted.price:
+            return  # already announced, and this is no better than what we announced
+        text = format_deal(watch, rows, typical)
+        if not await send_text(settings.deals_channel_id, text, preview=True):
+            return
+        await record_deal(s, rkey, best.price, best.currency)
+    log.info("announced deal %s at %s", rkey, best.price)
+
+
+SEND, RESET, SKIP = "send", "reset", "skip"
+
+
+def alert_decision(threshold: int | None, alerted_price: int | None, price: int) -> str:
+    """What to do about one watch at one price — the whole judgement, with no database in it.
+
+    SEND once when the fare crosses the target, and again only if it goes lower still. RESET when it
+    climbs back above, because forgetting the last alert is what lets the next dip count as news.
+    SKIP otherwise: a fare that sits under the target for a week is one message, not a hundred and
+    sixty-eight, and the difference between those two bots is whether anyone leaves it installed."""
+    if threshold is None:
+        return SKIP
+    if price > threshold:
+        return RESET if alerted_price is not None else SKIP
+    if alerted_price is not None and price >= alerted_price:
+        return SKIP
+    return SEND
+
+
+async def _alert_group(key: tuple[str, str, str], watchers: list[Watch], stats: dict) -> None:
+    """Price one route and tell whoever asked to be told, if the number they named has arrived."""
+    rkey, currency, market = key
+    first = watchers[0]
+    try:
+        offers = await fetch_offers(
+            first.origin,
+            first.destination,
+            first.depart_date,
+            SearchOpts.of(currency=currency, market=market),
+            ret=first.return_date,
+        )
+    except Exception as e:
+        log.error("alert scan failed %s: %s", rkey, e)
+        stats["errors"] += 1
+        return
+    if not offers:
+        return
+
+    rows = _to_quote_rows(rkey, offers[: settings.top_n], utcnow().replace(microsecond=0))
+    best = rows[0]
+    async with get_session() as s:
+        for w in watchers:
+            verdict = alert_decision(w.threshold_price, w.alerted_price, best.price)
+            if verdict == RESET:
+                w.alerted_price = None
+                s.add(w)
+                continue
+            if verdict == SKIP:
+                continue
+            lang = (await get_preference(s, w.user_id)).lang
+            try:
+                if await send_text(w.user_id, format_alert(w, rows, lang=lang), preview=True):
+                    stats["alerts"] += 1
+            except Exception as e:
+                log.error("alert failed for watch %s: %s", w.pk, e)
+                stats["errors"] += 1
+                continue
+            w.alerted_price = best.price
+            s.add(w)
+        await s.commit()
+
+
+async def alert_scan() -> dict:
+    """Check target-price watches between digests, so "under 400,000" arrives when it happens.
+
+    Only watches carrying a threshold are scanned. That is what keeps this affordable: the user has
+    told us, in a number, that this route is worth looking at more often than twice a day, and
+    everyone else's route costs nothing here. The full source set is used rather than the cheap JSON
+    one — an alert quoting a price the cheapest seller has already beaten would be the same broken
+    promise this whole feature exists to keep."""
+    stats = {"routes": 0, "alerts": 0, "errors": 0}
+    async with get_session() as s:
+        watches = await alerting_watches(s)
+    if not watches:
+        return stats
+
+    by_group: dict[tuple[str, str, str], list[Watch]] = defaultdict(list)
+    for w in watches:
+        by_group[_group_key(w)].append(w)
+    stats["routes"] = len(by_group)
+
+    gate = asyncio.Semaphore(max(1, settings.route_concurrency))
+
+    async def guarded(key: tuple[str, str, str], watchers: list[Watch]) -> None:
+        async with gate:
+            await _alert_group(key, watchers, stats)
+
+    await asyncio.gather(*(guarded(k, v) for k, v in by_group.items()))
+    if stats["alerts"] or stats["errors"]:
+        log.info("alert scan: %s", stats)
+    return stats
+
+
 HEARTBEAT_FILE = Path(settings.db_path).parent / ".poll_heartbeat"
 
 
@@ -173,10 +307,21 @@ async def loop() -> None:
     than one tick; the actual scraping still happens twice a day per watch, at the hour its owner
     chose. Sleeping for twelve hours instead would tie everyone's digest to whenever this process
     was last restarted, which is how prices used to arrive at four in the morning."""
+    last_scan = 0.0
     while True:
         try:
             await poll_once(only_due=True)
         except Exception as e:
             log.exception("poll cycle crashed: %s", e)
+        # Target-price watches are checked on their own, slower clock, in between digests. A monotonic
+        # clock rather than a wall one: this must not fire a burst of scans because the server's time
+        # was corrected, and it must survive the daylight-saving jump that moves everyone's slot.
+        now = asyncio.get_running_loop().time()
+        if now - last_scan >= settings.alert_scan_seconds:
+            last_scan = now
+            try:
+                await alert_scan()
+            except Exception as e:
+                log.exception("alert scan crashed: %s", e)
         _beat()
         await asyncio.sleep(settings.poll_tick_seconds)

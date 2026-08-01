@@ -25,16 +25,10 @@ WEEKDAYS = {
 UZ: dict[str, str] = {
     # --- onboarding ---
     "start": (
-        "✈️ <b>TicketCatch</b> — aviabilet narxlarini kuzatuvchi bot.\n\n"
-        "Men bir vaqtda <b>4 ta saytdan</b> narxlarni olaman — Kiwi, Trip.com, Google Flights, "
-        "Aviasales — va bitta ro'yxatga jamlab, eng arzonidan boshlab ko'rsataman.\n\n"
-        "<b>Nima qila olaman:</b>\n"
-        "🔍 Istalgan yo'nalish bo'yicha hozir narx topish\n"
-        "🔔 Yo'nalishni kuzatuvga qo'yish — kuniga 2 marta tekshiraman\n"
-        "📉 Narx tushsa, o'zim xabar beraman\n"
-        "🌍 Dunyoning istalgan aeroporti, o'z valyutangizda\n\n"
-        "Boshlash uchun 👇"
+        "✈️ <b>TicketCatch</b> — 4 ta saytdagi eng arzon aviabiletni bitta ro'yxatda ko'rsataman.\n\n"
+        "<b>Qayerga uchasiz?</b> Tanlang — narxni hozir topaman 👇"
     ),
+    "start_deeplink": "✈️ <b>{route}</b> · {date}\n\nNarxni qidiryapman…",
     "help": (
         "<b>Qanday ishlataman?</b>\n\n"
         "1️⃣ <b>/qidir</b> — panel ochiladi. Qayerdan, qayerga va qaysi kun — tanlang.\n"
@@ -133,6 +127,8 @@ UZ: dict[str, str] = {
     "thr_bad": "Faqat raqam yozing, masalan <code>750000</code>",
     "btn_thr_off": "✖️ Signalni o'chirish",
     "btn_history": "📉 Narx tarixi",
+    "btn_share": "📤 Ulashish",
+    "btn_other_route": "🌍 Boshqa yo'nalish",
     "btn_threshold": "🔥 Narx signali",
     "btn_pause": "⏸ Pauza",
     "btn_resume": "▶️ Davom etish",
@@ -188,6 +184,17 @@ UZ: dict[str, str] = {
     "cheaper": "↓ <b>{amount} arzonlashdi</b>",
     "pricier": "↑ {amount} qimmatlashdi",
     "alert": "🔥 <b>ALERT</b> — narx {threshold} dan past!",
+    "alert_now": "🎯 <b>Kutgan narxingiz keldi!</b>\n{route} · {date}\nSiz kutgan: {threshold} · Hozir: <b>{price}</b>",
+    "deal_post": "🔥 <b>{route}</b> · {date}\n<b>{price}</b> — odatdagidan {percent}% arzon (odatda ~{typical})",
+    "deal_foot": "\n<i>Shu yo'nalishni kuzatish uchun</i> 👉 @ticketcatch_bot",
+    "inline_ask": "✈️ Yo'nalish yozing",
+    "inline_ask_desc": "Masalan: ICN TAS  yoki  ICN TAS 2026-09-25",
+    "inline_open": "🔍 Narxni botda ko'rish",
+    "inline_open_desc": "{route} — hozir tayyor narx yo'q, bot to'liq qidiradi",
+    "inline_open_text": "✈️ <b>{route}</b> · {date}\n\nBu yo'nalish narxini ko'rish 👉 @ticketcatch_bot",
+    "inline_footer": '👉 <a href="{url}">Botda bugungi narxni ko\'ring</a>',
+    "inline_title": "{route} · {price} dan",
+    "inline_desc": "{date} · {airline}",
     "bags": "🧳 {count} ta",
     "bags_none": "🧳 yo'q",
     # --- misc ---
@@ -204,16 +211,10 @@ UZ: dict[str, str] = {
 
 RU: dict[str, str] = {
     "start": (
-        "✈️ <b>TicketCatch</b> — бот, который следит за ценами на авиабилеты.\n\n"
-        "Я собираю цены сразу с <b>4 сайтов</b> — Kiwi, Trip.com, Google Flights, Aviasales — "
-        "и показываю одним списком, начиная с самого дешёвого.\n\n"
-        "<b>Что я умею:</b>\n"
-        "🔍 Найти цену по любому маршруту прямо сейчас\n"
-        "🔔 Взять маршрут на контроль — проверяю 2 раза в день\n"
-        "📉 Сам напишу, когда цена упадёт\n"
-        "🌍 Любой аэропорт мира, в вашей валюте\n\n"
-        "Начнём 👇"
+        "✈️ <b>TicketCatch</b> — собираю цены с 4 сайтов в один список, от самой дешёвой.\n\n"
+        "<b>Куда летим?</b> Выберите — найду цену прямо сейчас 👇"
     ),
+    "start_deeplink": "✈️ <b>{route}</b> · {date}\n\nИщу цену…",
     "help": (
         "<b>Как пользоваться?</b>\n\n"
         "1️⃣ <b>/qidir</b> — откроется панель. Выберите откуда, куда и когда.\n"
@@ -308,6 +309,8 @@ RU: dict[str, str] = {
     "thr_bad": "Введите только число, например <code>750000</code>",
     "btn_thr_off": "✖️ Отключить сигнал",
     "btn_history": "📉 История цены",
+    "btn_share": "📤 Поделиться",
+    "btn_other_route": "🌍 Другой маршрут",
     "btn_threshold": "🔥 Сигнал по цене",
     "btn_pause": "⏸ Пауза",
     "btn_resume": "▶️ Продолжить",
@@ -361,6 +364,17 @@ RU: dict[str, str] = {
     "cheaper": "↓ <b>дешевле на {amount}</b>",
     "pricier": "↑ дороже на {amount}",
     "alert": "🔥 <b>ALERT</b> — цена ниже {threshold}!",
+    "alert_now": "🎯 <b>Ваша цена наступила!</b>\n{route} · {date}\nВы ждали: {threshold} · Сейчас: <b>{price}</b>",
+    "deal_post": "🔥 <b>{route}</b> · {date}\n<b>{price}</b> — на {percent}% дешевле обычного (обычно ~{typical})",
+    "deal_foot": "\n<i>Следить за этим направлением</i> 👉 @ticketcatch_bot",
+    "inline_ask": "✈️ Введите направление",
+    "inline_ask_desc": "Например: ICN TAS  или  ICN TAS 2026-09-25",
+    "inline_open": "🔍 Посмотреть цену в боте",
+    "inline_open_desc": "{route} — готовой цены нет, бот выполнит полный поиск",
+    "inline_open_text": "✈️ <b>{route}</b> · {date}\n\nПосмотреть цену 👉 @ticketcatch_bot",
+    "inline_footer": '👉 <a href="{url}">Посмотреть сегодняшнюю цену в боте</a>',
+    "inline_title": "{route} · от {price}",
+    "inline_desc": "{date} · {airline}",
     "bags": "🧳 {count} шт",
     "bags_none": "🧳 нет",
     "stats": "📊 <b>TicketCatch</b>\n\n👤 Пользователей: {users}\n🔔 Маршрутов: {watches}\n🔍 Поисков: {searches}\n💾 Записей цен: {quotes}",
@@ -376,16 +390,10 @@ RU: dict[str, str] = {
 
 EN: dict[str, str] = {
     "start": (
-        "✈️ <b>TicketCatch</b> — a bot that watches flight prices for you.\n\n"
-        "I pull prices from <b>4 sites at once</b> — Kiwi, Trip.com, Google Flights, Aviasales — "
-        "and show them as one list, cheapest first.\n\n"
-        "<b>What I can do:</b>\n"
-        "🔍 Find the price for any route right now\n"
-        "🔔 Watch a route — I check it twice a day\n"
-        "📉 Message you when the price drops\n"
-        "🌍 Any airport in the world, in your currency\n\n"
-        "Let's start 👇"
+        "✈️ <b>TicketCatch</b> — prices from 4 sites in one list, cheapest first.\n\n"
+        "<b>Where to?</b> Pick a route and I'll price it now 👇"
     ),
+    "start_deeplink": "✈️ <b>{route}</b> · {date}\n\nSearching…",
     "help": (
         "<b>How to use it</b>\n\n"
         "1️⃣ <b>/qidir</b> — opens the panel. Pick from, to and the day.\n"
@@ -480,6 +488,8 @@ EN: dict[str, str] = {
     "thr_bad": "Type just a number, for example <code>750000</code>",
     "btn_thr_off": "✖️ Switch the alert off",
     "btn_history": "📉 Price history",
+    "btn_share": "📤 Share",
+    "btn_other_route": "🌍 Another route",
     "btn_threshold": "🔥 Price alert",
     "btn_pause": "⏸ Pause",
     "btn_resume": "▶️ Resume",
@@ -533,6 +543,17 @@ EN: dict[str, str] = {
     "cheaper": "↓ <b>{amount} cheaper</b>",
     "pricier": "↑ {amount} more expensive",
     "alert": "🔥 <b>ALERT</b> — price is below {threshold}!",
+    "alert_now": "🎯 <b>Your price is here!</b>\n{route} · {date}\nYou wanted: {threshold} · Now: <b>{price}</b>",
+    "deal_post": "🔥 <b>{route}</b> · {date}\n<b>{price}</b> — {percent}% below the usual (normally ~{typical})",
+    "deal_foot": "\n<i>Track this route</i> 👉 @ticketcatch_bot",
+    "inline_ask": "✈️ Type a route",
+    "inline_ask_desc": "For example: ICN TAS  or  ICN TAS 2026-09-25",
+    "inline_open": "🔍 See the price in the bot",
+    "inline_open_desc": "{route} — no price ready, the bot will run a full search",
+    "inline_open_text": "✈️ <b>{route}</b> · {date}\n\nSee this route 👉 @ticketcatch_bot",
+    "inline_footer": '👉 <a href="{url}">See today\'s price in the bot</a>',
+    "inline_title": "{route} · from {price}",
+    "inline_desc": "{date} · {airline}",
     "bags": "🧳 {count}",
     "bags_none": "🧳 none",
     "stats": "📊 <b>TicketCatch</b>\n\n👤 Users: {users}\n🔔 Active watches: {watches}\n🔍 Searches: {searches}\n💾 Price rows: {quotes}",

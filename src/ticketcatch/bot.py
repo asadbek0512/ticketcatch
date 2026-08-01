@@ -10,7 +10,14 @@ from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import BotCommand, CallbackQuery, Message
+from aiogram.types import (
+    BotCommand,
+    CallbackQuery,
+    InlineQuery,
+    InlineQueryResultArticle,
+    InputTextMessageContent,
+    Message,
+)
 
 from . import airports, history, menu, money, schedule
 from .config import settings
@@ -28,7 +35,7 @@ from .i18n import ago_label, day_label, normalize, t
 from .models import Preference, PriceQuote, Watch, route_key, utcnow
 from .notifier import format_board, format_rows
 from .ratelimit import Cooldown
-from .search import day_prices, fetch_offers
+from .search import day_prices, fetch_offers, quick_offers
 from .sources import SearchOpts
 
 log = logging.getLogger("ticketcatch")
@@ -43,6 +50,9 @@ HOURS_IN_DAY = 24
 # a wrong reading — it is a reading taken eleven hours ago. Below this the search cache would serve
 # the same numbers back anyway, so refreshing sooner costs work and changes nothing.
 _STALE_BOARD_MINUTES = 45
+_INLINE_ROWS = 3  # a message dropped into someone else's chat is a headline, not a board
+_INLINE_LEAD_DAYS = 30  # "@bot ICN TAS" with no date means the same month out the menu opens on
+_INLINE_CACHE_SECONDS = 300  # Telegram may reuse our answer this long, sparing repeat searches
 
 _searching = Cooldown(settings.search_cooldown_seconds)
 # Route keys being re-priced right now, so two people opening the same watch — or one person
@@ -137,9 +147,43 @@ def _opts(pref: Preference) -> SearchOpts:
 # --- commands ----------------------------------------------------------------------------------
 
 
-async def _cmd_start(message: Message, state: FSMContext) -> None:
+def parse_deeplink(payload: str | None) -> tuple[str, str, date] | None:
+    """Read `ICN-TAS-2026-09-25` off a /start link, or None if it isn't one.
+
+    This is the other half of the share button: the inline card carries a t.me link with the route
+    in it, so someone who taps it in a group chat lands on that exact price rather than on a greeting
+    and a picker. Anything unparseable is treated as no payload at all — a malformed link should open
+    the normal first screen, not an error."""
+    if not payload:
+        return None
+    parts = payload.strip().split("-", 2)
+    if len(parts) != 3 or not (airports.is_iata(parts[0]) and airports.is_iata(parts[1])):
+        return None
+    origin, destination = parts[0].upper(), parts[1].upper()
+    if origin == destination:
+        return None
+    try:
+        depart = datetime.strptime(parts[2], _DATE_FMT).date()
+    except ValueError:
+        return None
+    return (origin, destination, depart) if depart > date.today() else None
+
+
+async def _cmd_start(message: Message, state: FSMContext, command: CommandObject) -> None:
     await state.clear()
     pref = await _pref(message)
+
+    shared = parse_deeplink(command.args)
+    if shared:
+        pref.origin, pref.destination, pref.depart_date = shared
+        pref.return_date = None  # the link describes a one-way; keeping an old return would misprice it
+        await _save(pref)
+        sent = await message.answer(
+            t(pref.lang, "start_deeplink", route=_route(pref), date=_when(pref))
+        )
+        await _run_search(sent, pref, _chat(message))
+        return
+
     await message.answer(t(pref.lang, "start"), reply_markup=menu.start_keyboard(pref.lang))
 
 
@@ -392,9 +436,17 @@ async def _cb_search(callback: CallbackQuery) -> None:
         return
     _searching.hit(chat_id)
     await callback.answer()
+    await _run_search(callback.message, pref, chat_id)
 
+
+async def _run_search(message: Message, pref: Preference, chat_id: str) -> None:
+    """Do the search and turn `message` into the board, whatever brought us here.
+
+    Shared by the Search button and by a shared link opened with /start, because those two arrive as
+    different Telegram objects but owe the user the same thing: one message that says "looking",
+    then becomes the answer."""
     route, when = _route(pref), _when(pref)
-    await _edit(callback.message, t(pref.lang, "searching", route=route, date=when))
+    await _edit(message, t(pref.lang, "searching", route=route, date=when))
 
     try:
         offers = await fetch_offers(
@@ -407,21 +459,38 @@ async def _cb_search(callback: CallbackQuery) -> None:
     except Exception as e:
         log.exception("live search failed for %s: %s", chat_id, e)
         _searching.clear(chat_id)  # our fault, not theirs — don't make them wait it out
-        await _edit(callback.message, t(pref.lang, "search_failed"), menu.result_keyboard(pref.lang))
+        await _edit(message, t(pref.lang, "search_failed"), menu.result_keyboard(pref))
         return
 
     if not offers:
         await _edit(
-            callback.message,
+            message,
             t(pref.lang, "search_empty", route=route, date=when),
-            menu.result_keyboard(pref.lang),
+            menu.result_keyboard(pref),
         )
         return
 
     pref.searches += 1
     await _save(pref)
     board = format_board(_live_rows(offers), route, _when(pref, long=True), pref.lang)
-    await _edit(callback.message, board, menu.result_keyboard(pref.lang))
+    await _edit(message, board, menu.result_keyboard(pref))
+
+
+async def _cb_route(callback: CallbackQuery, state: FSMContext) -> None:
+    """A popular route off the first screen: adopt it and price it, in one tap.
+
+    The date is left as whatever the user already had — a returning user keeps their trip, and a new
+    one gets the default lead time. Anything else would mean asking a stranger for a date before
+    showing them a single number, which is the wait that made the old /start screen a dead end."""
+    await state.clear()
+    _, origin, destination = callback.data.split(":", 2)
+    if not (airports.is_iata(origin) and airports.is_iata(destination)):
+        await callback.answer()
+        return
+    pref = await _pref(callback)
+    pref.origin, pref.destination = origin.upper(), destination.upper()
+    await _save(pref)
+    await _cb_search(callback)
 
 
 async def _cb_days(callback: CallbackQuery) -> None:
@@ -445,7 +514,7 @@ async def _cb_days(callback: CallbackQuery) -> None:
     except Exception as e:
         log.exception("calendar failed for %s: %s", chat_id, e)
         _searching.clear(chat_id)
-        await _edit(callback.message, t(pref.lang, "search_failed"), menu.result_keyboard(pref.lang))
+        await _edit(callback.message, t(pref.lang, "search_failed"), menu.result_keyboard(pref))
         return
 
     header = f"{t(pref.lang, 'btn_cheapest_days')}\n<b>{route}</b>"
@@ -1009,6 +1078,130 @@ async def _cb_set_tz(callback: CallbackQuery) -> None:
 # --- wiring ------------------------------------------------------------------------------------
 
 
+# --- inline mode -------------------------------------------------------------------------------
+
+
+def parse_inline(query: str) -> tuple[str, str, date] | None:
+    """"icn tas" or "ICN TAS 2026-09-25" -> a route to price, or None if it isn't one yet.
+
+    Only IATA codes are accepted. City names are how people search inside the bot, where a wrong
+    guess costs one tap to correct — but inline results appear while someone is typing in a group
+    chat, and answering "SEO" with a flight to Seogwipo in front of their friends is worse than
+    answering nothing. A missing date means the same default lead time the menu opens on."""
+    parts = query.replace(",", " ").split()
+    if len(parts) < 2 or not (airports.is_iata(parts[0]) and airports.is_iata(parts[1])):
+        return None
+    origin, destination = parts[0].upper(), parts[1].upper()
+    if origin == destination:
+        return None
+    depart = date.today() + timedelta(days=_INLINE_LEAD_DAYS)
+    if len(parts) > 2:
+        try:
+            depart = datetime.strptime(parts[2], _DATE_FMT).date()
+        except ValueError:
+            return None
+    return (origin, destination, depart) if depart > date.today() else None
+
+
+def _inline_article(id_: str, title: str, description: str, text: str) -> InlineQueryResultArticle:
+    return InlineQueryResultArticle(
+        id=id_,
+        title=title,
+        description=description,
+        input_message_content=InputTextMessageContent(
+            message_text=text, parse_mode=ParseMode.HTML, disable_web_page_preview=True
+        ),
+    )
+
+
+_username = ""
+
+
+async def _bot_username(bot) -> str:
+    """Our @name, asked for once and remembered — it is what makes a deep link a link."""
+    global _username
+    if not _username:
+        _username = (await bot.get_me()).username or ""
+    return _username
+
+
+def deeplink_payload(origin: str, destination: str, depart: date) -> str:
+    """The route as /start understands it. parse_deeplink is the reader; keep the two in step."""
+    return f"{origin}-{destination}-{depart.isoformat()}"
+
+
+async def _open_link(bot, lang: str, origin: str, destination: str, depart: date) -> str:
+    """A footer line that turns any shared price into a working search.
+
+    Without it an inline result is a dead end: whoever reads it in a group chat sees a number, wants
+    today's, and has to retype the route into a bot they have never opened. With it, one tap lands
+    them on this exact route already searching."""
+    name = await _bot_username(bot)
+    if not name:
+        return ""
+    url = f"https://t.me/{name}?start={deeplink_payload(origin, destination, depart)}"
+    return "\n\n" + t(lang, "inline_footer", url=url)
+
+
+async def _inline(query: InlineQuery) -> None:
+    """Prices from inside any chat: @ticketcatch_bot ICN TAS.
+
+    This is the one place the bot is used by people who have never opened it, so it answers with
+    whatever is already known and never makes a group chat wait. When nothing is cached the answer
+    is an honest offer to run the real search in the bot, rather than a spinner or a wrong number."""
+    async with get_session() as s:
+        pref = await get_preference(s, str(query.from_user.id))
+    lang = pref.lang
+    route = parse_inline(query.query or "")
+    if route is None:
+        await query.answer(
+            [
+                _inline_article(
+                    "ask", t(lang, "inline_ask"), t(lang, "inline_ask_desc"), t(lang, "help")
+                )
+            ],
+            cache_time=_INLINE_CACHE_SECONDS,
+            is_personal=True,
+        )
+        return
+
+    origin, destination, depart = route
+    label = f"{origin} → {destination}"
+    footer = await _open_link(query.bot, lang, origin, destination, depart)
+    offers = await quick_offers(origin, destination, depart, _opts(pref))
+    if not offers:
+        await query.answer(
+            [
+                _inline_article(
+                    f"open:{origin}{destination}",
+                    t(lang, "inline_open"),
+                    t(lang, "inline_open_desc", route=label),
+                    # No escaping needed: parse_inline only ever yields two IATA codes.
+                    t(lang, "inline_open_text", route=label, date=depart.isoformat()) + footer,
+                )
+            ],
+            cache_time=_INLINE_CACHE_SECONDS,
+            is_personal=True,
+        )
+        return
+
+    rows = _live_rows(offers)
+    best = rows[0]
+    board = format_board(rows[:_INLINE_ROWS], label, depart.isoformat(), lang)
+    await query.answer(
+        [
+            _inline_article(
+                f"board:{origin}{destination}{depart}",
+                t(lang, "inline_title", route=label, price=money.format_price(best.price, best.currency)),
+                t(lang, "inline_desc", date=depart.isoformat(), airline=best.airline or "—"),
+                board + footer,
+            )
+        ],
+        cache_time=_INLINE_CACHE_SECONDS,
+        is_personal=True,
+    )
+
+
 def build_dispatcher() -> Dispatcher:
     dp = Dispatcher(storage=MemoryStorage())
     dp.message.register(_cmd_start, Command("start"))
@@ -1025,6 +1218,7 @@ def build_dispatcher() -> Dispatcher:
     dp.callback_query.register(_cb_help, F.data == "help")
     dp.callback_query.register(_cb_swap, F.data == "swap")
     dp.callback_query.register(_cb_search, F.data == "go")
+    dp.callback_query.register(_cb_route, F.data.startswith("route:"))
     dp.callback_query.register(_cb_days, F.data == "days")
     dp.callback_query.register(_cb_watch, F.data == "watch")
     dp.callback_query.register(_cb_mine, F.data == "mine")
@@ -1046,6 +1240,7 @@ def build_dispatcher() -> Dispatcher:
     dp.callback_query.register(_cb_region, F.data.startswith("reg:"))
     dp.callback_query.register(_cb_set, F.data.startswith("set:"))
     dp.callback_query.register(_cb_manual, F.data.startswith("manual:"))
+    dp.inline_query.register(_inline)
     return dp
 
 

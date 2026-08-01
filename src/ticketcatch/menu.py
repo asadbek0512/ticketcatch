@@ -96,17 +96,50 @@ def panel_keyboard(pref: Preference) -> InlineKeyboardMarkup:
     )
 
 
+# The routes this bot's users actually fly: Uzbeks living and working in Korea, and their families
+# going the other way. A first-time visitor should be able to see a real price without first
+# learning that TAS means Tashkent — every extra screen between /start and a number is where the
+# people who would have liked this bot quietly stop.
+POPULAR_ROUTES: tuple[tuple[str, str], ...] = (
+    ("ICN", "TAS"),
+    ("TAS", "ICN"),
+    ("ICN", "SKD"),
+    ("ICN", "NMA"),
+    ("PUS", "TAS"),
+    ("TAS", "DXB"),
+)
+ROUTE_COLUMNS = 2
+
+
+def _short_city(code: str) -> str:
+    """"Seul Incheon" → "Seul". Two of these plus an arrow have to fit on half a phone screen, and
+    a label Telegram truncates mid-word is worse than a slightly less precise one — the airport code
+    is still what gets searched."""
+    return airports.city(code).split()[0]
+
+
 def start_keyboard(lang: str) -> InlineKeyboardMarkup:
-    """First screen: one obvious way in, plus the two things a new user asks for next."""
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=t(lang, "btn_search"), callback_data="panel")],
-            [
-                InlineKeyboardButton(text=t(lang, "btn_settings"), callback_data="cfg"),
-                InlineKeyboardButton(text=t(lang, "btn_help"), callback_data="help"),
-            ],
+    """First screen: the routes people came here for, priced in one tap.
+
+    This used to be a single "Search" button leading to a picker. It read as a form to fill in, and
+    a form is what a stranger closes — so the common answers are on the first screen now, and the
+    picker is the escape hatch underneath rather than the toll gate in front."""
+    buttons = [
+        InlineKeyboardButton(
+            text=f"{_short_city(origin)} → {_short_city(destination)}",
+            callback_data=f"route:{origin}:{destination}",
+        )
+        for origin, destination in POPULAR_ROUTES
+    ]
+    rows = _rows(buttons, ROUTE_COLUMNS)
+    rows.append([InlineKeyboardButton(text=t(lang, "btn_other_route"), callback_data="panel")])
+    rows.append(
+        [
+            InlineKeyboardButton(text=t(lang, "btn_settings"), callback_data="cfg"),
+            InlineKeyboardButton(text=t(lang, "btn_help"), callback_data="help"),
         ]
     )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 # --- airport pickers ---------------------------------------------------------------------------
@@ -225,7 +258,10 @@ def return_date_keyboard(depart: date, current: date | None, lang: str) -> Inlin
 # --- results -----------------------------------------------------------------------------------
 
 
-def result_keyboard(lang: str) -> InlineKeyboardMarkup:
+def result_keyboard(pref: Preference) -> InlineKeyboardMarkup:
+    """What to do with a board you just searched for — including handing it to someone else, which
+    is the moment a traveller is most likely to want to."""
+    lang = pref.lang
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -234,8 +270,9 @@ def result_keyboard(lang: str) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(text=t(lang, "btn_cheapest_days"), callback_data="days"),
-                InlineKeyboardButton(text=t(lang, "btn_panel"), callback_data="panel"),
+                share_button(pref.origin, pref.destination, pref.depart_date, lang),
             ],
+            [InlineKeyboardButton(text=t(lang, "btn_panel"), callback_data="panel")],
         ]
     )
 
@@ -260,6 +297,19 @@ def watches_keyboard(watches: list[Watch], lang: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def share_button(origin: str, destination: str, depart: date, lang: str) -> InlineKeyboardButton:
+    """Pass a route to a friend as a live query rather than a screenshot.
+
+    switch_inline_query hands Telegram's own chat picker the text "ICN TAS 2026-09-25". Whoever
+    receives it gets prices looked up at the moment they read the message, so a fare that has moved
+    since is simply not quoted — which is the difference between a share that helps and a share
+    that misleads a week later."""
+    return InlineKeyboardButton(
+        text=t(lang, "btn_share"),
+        switch_inline_query=f"{origin} {destination} {depart.isoformat()}",
+    )
+
+
 def watch_keyboard(watch: Watch, lang: str) -> InlineKeyboardMarkup:
     """Everything you can do to one watch. Delete sits alone on the last row, away from the taps
     people make while browsing."""
@@ -280,7 +330,8 @@ def watch_keyboard(watch: Watch, lang: str) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(
                     text=t(lang, "btn_resume" if watch.paused else "btn_pause"),
                     callback_data=f"pause:{watch.pk}",
-                )
+                ),
+                share_button(watch.origin, watch.destination, watch.depart_date, lang),
             ],
             [InlineKeyboardButton(text=t(lang, "btn_delete"), callback_data=f"del:{watch.pk}")],
             _back(lang, "mine"),

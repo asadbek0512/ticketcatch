@@ -96,6 +96,49 @@ async def _run(
         return []
 
 
+INLINE_TIMEOUT = 6.0  # Telegram drops an inline answer that takes longer than about ten seconds
+
+
+async def quick_offers(
+    origin: str,
+    destination: str,
+    depart: date,
+    opts: SearchOpts | None = None,
+    ret: date | None = None,
+) -> list[Quote]:
+    """A fast, partial board for inline mode — cache first, then the JSON source alone.
+
+    Inline queries fire while someone is still typing and must be answered in seconds, so the four
+    browser-driven minutes a real search costs are not on the table. What is on the table is honest:
+    prices someone else's search already paid for, or Kiwi's, which answers over HTTP. A full board
+    found in the shared cache beats our partial one and is preferred; our own result is kept apart
+    from it so a one-source answer can never be served to the poller as if it were the whole market.
+
+    Returns [] rather than raising. An empty inline answer offers to open the bot, which is a better
+    outcome than an error inside somebody else's group chat."""
+    opts = opts or SearchOpts.of()
+    full_key = cache_key(origin, destination, depart, opts, ret)
+    async with get_session() as session:
+        for key in (full_key, f"inline|{full_key}"):
+            hit = await cached_offers(session, key, settings.cache_ttl_seconds)
+            if hit:
+                return hit
+
+    try:
+        offers = await asyncio.wait_for(
+            kiwi.fetch(origin, destination, depart, opts, ret), INLINE_TIMEOUT
+        )
+    except Exception as e:
+        log.info("inline search gave up %s-%s: %s", origin, destination, e)
+        return []
+
+    merged = dedupe([_named(q) for q in offers])
+    if merged:
+        async with get_session() as session:
+            await store_offers(session, f"inline|{full_key}", merged)
+    return merged
+
+
 def calendar_days(around: date) -> list[date]:
     """The strip of days to price, never starting before tomorrow."""
     start = max(around - timedelta(days=CALENDAR_LOOKBACK), date.today() + timedelta(days=1))

@@ -19,6 +19,7 @@ log = logging.getLogger("ticketcatch")
 GLOBAL_INTERVAL = 1 / 25
 CHAT_INTERVAL = 1.05
 SEND_RETRIES = 3
+DEAL_ROWS = 2  # a channel post is a headline, not a departures board
 
 _send_lock = asyncio.Lock()
 _last_global = 0.0
@@ -134,6 +135,62 @@ def format_digest(
     # quote, not a booking" line more than the on-demand board does, not less.
     lines.extend(("", t(lang, "results_foot")))
     return "\n".join(lines)
+
+
+def format_alert(watch: Watch, cheapest: list[PriceQuote], lang: str | None = None) -> str:
+    """The out-of-turn message: the price you asked to be told about has arrived.
+
+    Deliberately shorter than the digest. This one interrupts someone's day, so it leads with the
+    two numbers that justify the interruption — what they asked for and what it costs now — and
+    only then lists the flights."""
+    lang = lang or watch.lang
+    route = f"{watch.origin} → {watch.destination}"
+    when = watch.depart_date.isoformat()
+    if watch.return_date:
+        when = f"{when} → {watch.return_date.isoformat()}"
+    best = cheapest[0]
+    head = t(
+        lang,
+        "alert_now",
+        route=_e(route),
+        date=when,
+        threshold=format_price(watch.threshold_price or best.price, best.currency),
+        price=format_price(best.price, best.currency),
+    )
+    return f"{head}\n\n{format_rows(cheapest, lang)}"
+
+
+def discount_percent(typical: int, price: int) -> int:
+    """How far under the usual price this fare is, rounded down so the claim is never overstated."""
+    if typical <= 0 or price >= typical:
+        return 0
+    return int((typical - price) * 100 // typical)
+
+
+def format_deal(
+    watch: Watch, cheapest: list[PriceQuote], typical: int, lang: str | None = None
+) -> str:
+    """A public post for a fare good enough to interest someone who has never used the bot.
+
+    Two flights, not eight: this is read by strangers scrolling a channel, and the point is the
+    number and the route. Anyone who wants the whole board can open the bot, which is what the
+    last line is for."""
+    lang = lang or settings.default_lang
+    route = f"{watch.origin} → {watch.destination}"
+    when = watch.depart_date.isoformat()
+    if watch.return_date:
+        when = f"{when} → {watch.return_date.isoformat()}"
+    best = cheapest[0]
+    head = t(
+        lang,
+        "deal_post",
+        route=_e(route),
+        date=when,
+        price=format_price(best.price, best.currency),
+        percent=discount_percent(typical, best.price),
+        typical=format_price(typical, best.currency),
+    )
+    return f"{head}\n\n{format_rows(cheapest[:DEAL_ROWS], lang)}\n{t(lang, 'deal_foot')}"
 
 
 async def _pace(chat_id: str) -> None:
