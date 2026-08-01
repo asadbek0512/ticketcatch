@@ -96,19 +96,25 @@ def panel_keyboard(pref: Preference) -> InlineKeyboardMarkup:
     )
 
 
-# The routes this bot's users actually fly: Uzbeks living and working in Korea, and their families
-# going the other way. A first-time visitor should be able to see a real price without first
-# learning that TAS means Tashkent — every extra screen between /start and a number is where the
-# people who would have liked this bot quietly stop.
-POPULAR_ROUTES: tuple[tuple[str, str], ...] = (
-    ("ICN", "TAS"),
-    ("TAS", "ICN"),
-    ("ICN", "SKD"),
-    ("ICN", "NMA"),
-    ("PUS", "TAS"),
-    ("TAS", "DXB"),
-)
+# Departure cities for the first screen. This bot searches 129 airports on every continent, and the
+# first screen has to look like that — an opening menu of fixed routes out of one country tells
+# everyone else the bot is not for them. These six are hubs on different continents, so whoever
+# opens the bot sees at least one city they might actually leave from.
+START_ORIGINS: tuple[str, ...] = ("TAS", "ICN", "SVO", "IST", "DXB", "ALA")
+
+# Where people actually go from each of those hubs. Only ever shown after the traveller has told us
+# where they are, so nobody is offered a corridor that has nothing to do with them; the "other city"
+# button next to them opens the full 129 either way.
+ROUTES_FROM: dict[str, tuple[str, ...]] = {
+    "TAS": ("ICN", "SVO", "IST", "DXB", "ALA", "JFK"),
+    "ICN": ("TAS", "SKD", "NMA", "FEG", "BHK", "UGC"),
+    "SVO": ("TAS", "SKD", "NMA", "IST", "DXB", "ALA"),
+    "IST": ("TAS", "SKD", "ICN", "DXB", "SVO", "JFK"),
+    "DXB": ("TAS", "SKD", "ICN", "IST", "DEL", "SVO"),
+    "ALA": ("TAS", "IST", "DXB", "ICN", "SVO", "NQZ"),
+}
 ROUTE_COLUMNS = 2
+RECENT_ROUTES = 2  # how many of the traveller's own routes get a one-tap button
 
 
 def _short_city(code: str) -> str:
@@ -118,25 +124,67 @@ def _short_city(code: str) -> str:
     return airports.city(code).split()[0]
 
 
-def start_keyboard(lang: str) -> InlineKeyboardMarkup:
-    """First screen: the routes people came here for, priced in one tap.
+def _route_button(origin: str, destination: str) -> InlineKeyboardButton:
+    return InlineKeyboardButton(
+        text=f"{_short_city(origin)} → {_short_city(destination)}",
+        callback_data=f"route:{origin}:{destination}",
+    )
 
-    This used to be a single "Search" button leading to a picker. It read as a form to fill in, and
-    a form is what a stranger closes — so the common answers are on the first screen now, and the
-    picker is the escape hatch underneath rather than the toll gate in front."""
-    buttons = [
-        InlineKeyboardButton(
-            text=f"{_short_city(origin)} → {_short_city(destination)}",
-            callback_data=f"route:{origin}:{destination}",
-        )
-        for origin, destination in POPULAR_ROUTES
+
+def start_keyboard(lang: str, recent: tuple[tuple[str, str], ...] = ()) -> InlineKeyboardMarkup:
+    """First screen: where are you flying from?
+
+    Someone who has used the bot before gets their own routes on top, priced in one tap — that is
+    the fastest this can be, and it is personal rather than guessed. Everyone else picks a departure
+    city and then a destination, which is two taps to a real price and, unlike a fixed list of
+    routes, works the same whether they are in Tashkent, Almaty or New York."""
+    rows: list[list[InlineKeyboardButton]] = [
+        [_route_button(origin, destination)]
+        for origin, destination in recent[:RECENT_ROUTES]
+        if airports.is_iata(origin) and airports.is_iata(destination)
     ]
-    rows = _rows(buttons, ROUTE_COLUMNS)
+    rows += _rows(
+        [
+            InlineKeyboardButton(
+                text=f"{airports.flag(code)} {_short_city(code)}",
+                callback_data=f"from:{code}",
+            )
+            for code in START_ORIGINS
+        ],
+        ROUTE_COLUMNS,
+    )
     rows.append([InlineKeyboardButton(text=t(lang, "btn_other_route"), callback_data="panel")])
     rows.append(
         [
             InlineKeyboardButton(text=t(lang, "btn_settings"), callback_data="cfg"),
             InlineKeyboardButton(text=t(lang, "btn_help"), callback_data="help"),
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def destination_keyboard(origin: str, lang: str) -> InlineKeyboardMarkup:
+    """Second screen: having said where they are, where are they going?
+
+    Tapping a city here does not fill in a form — it searches. The whole point of these two screens
+    is that a stranger sees a real price before being asked to understand anything."""
+    # Only the destination is named: the message above these buttons already says where the
+    # traveller is leaving from, and repeating it on all six buttons costs the width that would
+    # otherwise show the city.
+    rows = _rows(
+        [
+            InlineKeyboardButton(
+                text=f"{airports.flag(code)} {_short_city(code)}",
+                callback_data=f"route:{origin}:{code}",
+            )
+            for code in ROUTES_FROM.get(origin, ())
+        ],
+        ROUTE_COLUMNS,
+    )
+    rows.append(
+        [
+            InlineKeyboardButton(text=t(lang, "btn_other_city"), callback_data=f"toany:{origin}"),
+            InlineKeyboardButton(text=t(lang, "btn_back_start"), callback_data="home"),
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)

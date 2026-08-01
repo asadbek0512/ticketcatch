@@ -585,22 +585,51 @@ def test_what_share_writes_is_what_inline_reads():
     assert parse_inline(query) == ("ICN", "TAS", when)
 
 
-def test_the_first_screen_offers_real_routes_not_a_form():
-    """A stranger who opens the bot should be one tap from a price. Every route button has to carry
-    a route the callback can actually act on — a typo here is a dead button on the first screen."""
-    from ticketcatch.menu import POPULAR_ROUTES, start_keyboard
+def test_the_first_screen_is_not_about_one_country():
+    """The bot searches 129 airports on every continent, and the opening screen has to look like it.
+    A departure list drawn from a single country tells everyone else the bot is not for them."""
+    from ticketcatch.menu import START_ORIGINS, start_keyboard
 
-    routes = [
-        b.callback_data
+    origins = [
+        b.callback_data.split(":")[1]
         for row in start_keyboard("uz").inline_keyboard
         for b in row
-        if b.callback_data.startswith("route:")
+        if b.callback_data.startswith("from:")
     ]
-    assert len(routes) == len(POPULAR_ROUTES)
-    for data in routes:
-        _, origin, destination = data.split(":")
-        assert airports.is_iata(origin) and airports.is_iata(destination)
-        assert origin != destination
+    assert origins == list(START_ORIGINS)
+    countries = {airports.get(code).country for code in origins}
+    assert len(countries) >= 4, f"first screen leans on too few countries: {countries}"
+
+
+def test_every_offered_destination_is_a_real_flight():
+    """Every city on the second screen has to be a code the search can act on, and never the city
+    the traveller is already standing in."""
+    from ticketcatch.menu import ROUTES_FROM, START_ORIGINS, destination_keyboard
+
+    assert set(ROUTES_FROM) == set(START_ORIGINS)
+    for origin, destinations in ROUTES_FROM.items():
+        assert airports.is_iata(origin)
+        assert origin not in destinations
+        assert len(set(destinations)) == len(destinations)
+        routes = [
+            b.callback_data
+            for row in destination_keyboard(origin, "uz").inline_keyboard
+            for b in row
+            if b.callback_data.startswith("route:")
+        ]
+        assert len(routes) == len(destinations)
+        for data in routes:
+            _, start, end = data.split(":")
+            assert start == origin
+            assert airports.is_iata(end) and airports.get(end) is not None
+
+
+def test_a_returning_traveller_sees_their_own_route_first():
+    """Someone who has used the bot before should not have to walk the picker again."""
+    from ticketcatch.menu import start_keyboard
+
+    top = start_keyboard("uz", (("TAS", "IST"),)).inline_keyboard[0]
+    assert top[0].callback_data == "route:TAS:IST"
 
 
 def test_a_shared_link_opens_on_the_shared_route():

@@ -209,6 +209,20 @@ def label(code: str) -> str:
     return found.label if found else code.upper()
 
 
+_FLAG_OFFSET = ord("🇦") - ord("A")  # ASCII letter -> regional indicator symbol
+
+
+def flag(code: str) -> str:
+    """The country's flag emoji for an airport, derived from its two-letter country code.
+
+    Built rather than tabulated: every country already on file gets a flag for free, so adding an
+    airport never means remembering to add an emoji beside it."""
+    found = get(code)
+    if not found or len(found.country) != 2:
+        return ""
+    return "".join(chr(ord(c) + _FLAG_OFFSET) for c in found.country.upper())
+
+
 def in_region(region: str) -> list[Airport]:
     return [AIRPORTS[row[0]] for row in REGIONS.get(region, ())]
 

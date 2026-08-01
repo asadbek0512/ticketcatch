@@ -184,12 +184,18 @@ async def _cmd_start(message: Message, state: FSMContext, command: CommandObject
         await _run_search(sent, pref, _chat(message))
         return
 
-    await message.answer(t(pref.lang, "start"), reply_markup=menu.start_keyboard(pref.lang))
+    await message.answer(
+        t(pref.lang, "start"),
+        reply_markup=menu.start_keyboard(pref.lang, await _recent_routes(pref)),
+    )
 
 
 async def _cmd_help(message: Message) -> None:
     pref = await _pref(message)
-    await message.answer(t(pref.lang, "help"), reply_markup=menu.start_keyboard(pref.lang))
+    await message.answer(
+        t(pref.lang, "help"),
+        reply_markup=menu.start_keyboard(pref.lang, await _recent_routes(pref)),
+    )
 
 
 async def _cmd_menu(message: Message, state: FSMContext) -> None:
@@ -476,6 +482,69 @@ async def _run_search(message: Message, pref: Preference, chat_id: str) -> None:
     await _edit(message, board, menu.result_keyboard(pref))
 
 
+async def _cb_from(callback: CallbackQuery, state: FSMContext) -> None:
+    """Departure city chosen on the first screen — now ask where to, and only that."""
+    await state.clear()
+    origin = callback.data.split(":", 1)[1]
+    if not airports.is_iata(origin):
+        await callback.answer()
+        return
+    pref = await _pref(callback)
+    await _edit(
+        callback.message,
+        t(pref.lang, "start_to", city=airports.city(origin)),
+        menu.destination_keyboard(origin.upper(), pref.lang),
+    )
+    await callback.answer()
+
+
+async def _cb_to_any(callback: CallbackQuery, state: FSMContext) -> None:
+    """"Another city" on the destination screen: keep the departure, open the full list of 129."""
+    await state.clear()
+    origin = callback.data.split(":", 1)[1]
+    pref = await _pref(callback)
+    if airports.is_iata(origin) and origin.upper() != pref.destination:
+        pref.origin = origin.upper()
+        await _save(pref)
+    await _edit(
+        callback.message,
+        t(pref.lang, "ask_to"),
+        menu.airport_keyboard("destination", pref.origin, pref.lang),
+    )
+    await callback.answer()
+
+
+async def _cb_home(callback: CallbackQuery, state: FSMContext) -> None:
+    """Back to the first screen, without losing the routes this traveller already uses."""
+    await state.clear()
+    pref = await _pref(callback)
+    await _edit(
+        callback.message,
+        t(pref.lang, "start"),
+        menu.start_keyboard(pref.lang, await _recent_routes(pref)),
+    )
+    await callback.answer()
+
+
+async def _recent_routes(pref: Preference) -> tuple[tuple[str, str], ...]:
+    """This traveller's own routes, newest first — their watches, then whatever the menu holds.
+
+    A returning user's first screen should be about their trip, not about the six cities we guessed.
+    Deduplicated because watching the outbound and the return of one journey is still one route to
+    put a button on."""
+    async with get_session() as s:
+        watches = await user_watches(s, pref.user_id)
+    seen: list[tuple[str, str]] = []
+    for w in sorted(watches, key=lambda w: w.created_at, reverse=True):
+        pair = (w.origin, w.destination)
+        if pair not in seen:
+            seen.append(pair)
+    pair = (pref.origin, pref.destination)
+    if pref.searches and pair not in seen:
+        seen.append(pair)
+    return tuple(seen[: menu.RECENT_ROUTES])
+
+
 async def _cb_route(callback: CallbackQuery, state: FSMContext) -> None:
     """A popular route off the first screen: adopt it and price it, in one tap.
 
@@ -566,7 +635,7 @@ async def _watch_list(pref: Preference) -> tuple[str, object]:
     async with get_session() as s:
         mine = await user_watches(s, pref.user_id)
     if not mine:
-        return t(pref.lang, "watch_none"), menu.start_keyboard(pref.lang)
+        return t(pref.lang, "watch_none"), menu.start_keyboard(pref.lang, await _recent_routes(pref))
 
     lines = [t(pref.lang, "watch_list"), ""]
     async with get_session() as s:
@@ -1219,6 +1288,9 @@ def build_dispatcher() -> Dispatcher:
     dp.callback_query.register(_cb_swap, F.data == "swap")
     dp.callback_query.register(_cb_search, F.data == "go")
     dp.callback_query.register(_cb_route, F.data.startswith("route:"))
+    dp.callback_query.register(_cb_from, F.data.startswith("from:"))
+    dp.callback_query.register(_cb_to_any, F.data.startswith("toany:"))
+    dp.callback_query.register(_cb_home, F.data == "home")
     dp.callback_query.register(_cb_days, F.data == "days")
     dp.callback_query.register(_cb_watch, F.data == "watch")
     dp.callback_query.register(_cb_mine, F.data == "mine")

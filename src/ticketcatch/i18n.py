@@ -25,8 +25,8 @@ WEEKDAYS = {
 UZ: dict[str, str] = {
     # --- onboarding ---
     "start": (
-        "✈️ <b>TicketCatch</b> — 4 ta saytdagi eng arzon aviabiletni bitta ro'yxatda ko'rsataman.\n\n"
-        "<b>Qayerga uchasiz?</b> Tanlang — narxni hozir topaman 👇"
+        "✈️ <b>TicketCatch</b> — 4 ta saytdagi eng arzon aviabilet, bitta ro'yxatda.\n\n"
+        "<b>Qayerdan uchasiz?</b> Shaharni tanlang 👇"
     ),
     "start_deeplink": "✈️ <b>{route}</b> · {date}\n\nNarxni qidiryapman…",
     "help": (
@@ -129,6 +129,9 @@ UZ: dict[str, str] = {
     "btn_history": "📉 Narx tarixi",
     "btn_share": "📤 Ulashish",
     "btn_other_route": "🌍 Boshqa yo'nalish",
+    "start_to": "✈️ <b>{city}</b> dan uchasiz.\n\n<b>Qayerga?</b> Tanlang — narxni hozir topaman 👇",
+    "btn_other_city": "🌍 Boshqa shahar",
+    "btn_back_start": "⬅️ Ortga",
     "btn_threshold": "🔥 Narx signali",
     "btn_pause": "⏸ Pauza",
     "btn_resume": "▶️ Davom etish",
@@ -212,7 +215,7 @@ UZ: dict[str, str] = {
 RU: dict[str, str] = {
     "start": (
         "✈️ <b>TicketCatch</b> — собираю цены с 4 сайтов в один список, от самой дешёвой.\n\n"
-        "<b>Куда летим?</b> Выберите — найду цену прямо сейчас 👇"
+        "<b>Откуда летим?</b> Выберите город 👇"
     ),
     "start_deeplink": "✈️ <b>{route}</b> · {date}\n\nИщу цену…",
     "help": (
@@ -311,6 +314,9 @@ RU: dict[str, str] = {
     "btn_history": "📉 История цены",
     "btn_share": "📤 Поделиться",
     "btn_other_route": "🌍 Другой маршрут",
+    "start_to": "✈️ Вылет из <b>{city}</b>.\n\n<b>Куда?</b> Выберите — найду цену прямо сейчас 👇",
+    "btn_other_city": "🌍 Другой город",
+    "btn_back_start": "⬅️ Назад",
     "btn_threshold": "🔥 Сигнал по цене",
     "btn_pause": "⏸ Пауза",
     "btn_resume": "▶️ Продолжить",
@@ -391,7 +397,7 @@ RU: dict[str, str] = {
 EN: dict[str, str] = {
     "start": (
         "✈️ <b>TicketCatch</b> — prices from 4 sites in one list, cheapest first.\n\n"
-        "<b>Where to?</b> Pick a route and I'll price it now 👇"
+        "<b>Where are you flying from?</b> Pick a city 👇"
     ),
     "start_deeplink": "✈️ <b>{route}</b> · {date}\n\nSearching…",
     "help": (
@@ -490,6 +496,9 @@ EN: dict[str, str] = {
     "btn_history": "📉 Price history",
     "btn_share": "📤 Share",
     "btn_other_route": "🌍 Another route",
+    "start_to": "✈️ Flying from <b>{city}</b>.\n\n<b>Where to?</b> Pick one and I'll price it now 👇",
+    "btn_other_city": "🌍 Another city",
+    "btn_back_start": "⬅️ Back",
     "btn_threshold": "🔥 Price alert",
     "btn_pause": "⏸ Pause",
     "btn_resume": "▶️ Resume",
