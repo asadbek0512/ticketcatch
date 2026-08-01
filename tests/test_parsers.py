@@ -472,3 +472,15 @@ def test_a_new_user_starts_in_the_default_language():
 
     assert "lang_hint" not in inspect.signature(get_preference).parameters
     assert Preference(user_id="new").lang == settings.default_lang
+
+
+def test_the_poller_leaves_proof_it_is_alive(tmp_path, monkeypatch):
+    """The watchdog needs to tell a wedged loop from a quiet one. Since a watch is only priced at
+    its owner's hour, twelve hours can pass with nothing written to the database and nothing wrong
+    — so the loop leaves this mark on every tick instead."""
+    from ticketcatch import poller
+
+    beat = tmp_path / "data" / ".poll_heartbeat"
+    monkeypatch.setattr(poller, "HEARTBEAT_FILE", beat)
+    poller._beat()
+    assert beat.exists()

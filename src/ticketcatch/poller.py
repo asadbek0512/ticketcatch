@@ -2,6 +2,7 @@ import asyncio
 import logging
 from collections import defaultdict
 from datetime import datetime
+from pathlib import Path
 
 from . import schedule
 from .config import settings
@@ -148,6 +149,25 @@ async def poll_once(only_due: bool = False) -> dict:
     return stats
 
 
+HEARTBEAT_FILE = Path(settings.db_path).parent / ".poll_heartbeat"
+
+
+def _beat() -> None:
+    """Touch a file after every tick so the watchdog can tell "alive" from "quiet".
+
+    Since each watch is priced at its owner's hour, twelve hours can pass with nothing written to
+    the database and nothing wrong — the old watchdog read that silence as a dead poller and cried
+    wolf twice a day. This file separates the two questions: the heartbeat says the loop is still
+    turning (checked in minutes), the price table says the searches still find something (checked
+    in days). It is written even when a cycle raised, because a loop that keeps failing is a
+    different fault from a loop that stopped, and only the price check should catch it."""
+    try:
+        HEARTBEAT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        HEARTBEAT_FILE.touch()
+    except OSError as e:  # a watchdog file is never worth killing the poller over
+        log.warning("could not write heartbeat: %s", e)
+
+
 async def loop() -> None:
     """Wake often, work rarely. The tick is short so that a delivery hour is never missed by more
     than one tick; the actual scraping still happens twice a day per watch, at the hour its owner
@@ -158,4 +178,5 @@ async def loop() -> None:
             await poll_once(only_due=True)
         except Exception as e:
             log.exception("poll cycle crashed: %s", e)
+        _beat()
         await asyncio.sleep(settings.poll_tick_seconds)
