@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import date, datetime, timedelta, timezone
 
@@ -37,8 +38,23 @@ _RESULT_LIMIT = 8
 _MAX_WATCHES = 10  # a watch costs a search twice a day; this is generosity, not a wall
 _MAX_LEAD_DAYS = 335  # airlines sell ~11 months out — beyond that every source returns nothing
 HOURS_IN_DAY = 24
+# How old a stored board may be before opening a watch also re-prices it in the background. The
+# whole complaint about a price bot is "it said X and the site says Y", and the usual cause is not
+# a wrong reading — it is a reading taken eleven hours ago. Below this the search cache would serve
+# the same numbers back anyway, so refreshing sooner costs work and changes nothing.
+_STALE_BOARD_MINUTES = 45
 
 _searching = Cooldown(settings.search_cooldown_seconds)
+# Route keys being re-priced right now, so two people opening the same watch — or one person
+# tapping back and forth — start one search instead of several.
+_refreshing: set[str] = set()
+# asyncio keeps only a weak reference to a running task; without this the refresh can be collected
+# mid-flight and the user is left looking at the stale board forever.
+_background: set = set()
+# Screens drawn per chat. A background refresh takes up to a minute and a half, by which time the
+# reader may have walked off to another screen — this counter is how it notices, so a late answer
+# corrects the card it belongs to or is dropped, never lands on top of whatever is there now.
+_nav: dict[int, int] = {}
 
 # The ☰ button next to the input field. /qidir leads because everything else is reachable from it.
 _COMMANDS = [
@@ -77,6 +93,7 @@ async def _save(pref: Preference) -> None:
 async def _edit(message: Message, text: str, markup=None) -> None:
     """Edit in place, tolerating the two harmless failures: an unchanged body and a message too
     old for Telegram to edit. Neither is worth an error in the user's chat."""
+    _nav[message.chat.id] = _nav.get(message.chat.id, 0) + 1
     try:
         await message.edit_text(text, reply_markup=markup, disable_web_page_preview=True)
     except TelegramBadRequest as e:
@@ -549,7 +566,9 @@ def _watch_label(watch: Watch, lang: str) -> tuple[str, str]:
     return route, when
 
 
-def _watch_card(watch: Watch, lang: str, board: list[PriceQuote] | None = None) -> str:
+def _watch_card(
+    watch: Watch, lang: str, board: list[PriceQuote] | None = None, refreshing: bool = False
+) -> str:
     """The watch, and — instantly — the prices the last check found.
 
     No searching happens here. The poller stores every board it fetches, so the answer to "what
@@ -574,13 +593,65 @@ def _watch_card(watch: Watch, lang: str, board: list[PriceQuote] | None = None) 
     if not board:
         return f"{head}\n\n{t(lang, 'no_prices_yet')}"
     rows = format_rows(board[:_RESULT_LIMIT], lang)
-    return f"{head}\n{t(lang, 'checked_at', ago=_ago(board[0].captured_at, lang))}\n\n{rows}"
+    checked = t(lang, "checked_at", ago=_ago(board[0].captured_at, lang))
+    if refreshing:
+        checked = f"{checked}\n{t(lang, 'refreshing')}"
+    return f"{head}\n{checked}\n\n{rows}"
 
 
-async def _watch_screen(watch: Watch, lang: str) -> tuple[str, object]:
+def _is_stale(board: list[PriceQuote]) -> bool:
+    """Old enough that the airline's own page has probably moved on since we looked."""
+    if not board:
+        return False
+    at = board[0].captured_at
+    at = at if at.tzinfo else at.replace(tzinfo=timezone.utc)
+    return (utcnow() - at) > timedelta(minutes=_STALE_BOARD_MINUTES)
+
+
+async def _watch_screen(watch: Watch, lang: str) -> tuple[str, object, bool]:
     async with get_session() as s:
         board = await last_board(s, _rkey(watch), watch.currency)
-    return _watch_card(watch, lang, board), menu.watch_keyboard(watch, lang)
+    stale = _is_stale(board)
+    return _watch_card(watch, lang, board, refreshing=stale), menu.watch_keyboard(watch, lang), stale
+
+
+async def _refresh_board(message: Message, watch: Watch, lang: str, drawn: int) -> None:
+    """Re-price a watch behind the reader's back and correct the card in place.
+
+    A stored board answers instantly, which is the whole point of storing it — but between the
+    morning digest and lunchtime the airline has often moved, and the reader compares our number
+    with the site's and concludes the bot lies. So the stale board is shown *and* re-priced: they
+    read real numbers immediately, and the card quietly becomes today's a minute later.
+
+    Nothing here is written to the price history. The poller stays the only writer, because the
+    digest's "cheaper than last time" badge compares against the last stored capture — letting a
+    tap insert one would silently redefine "last time" as "since you last looked at your phone"."""
+    rkey = _rkey(watch)
+    if rkey in _refreshing:
+        return
+    _refreshing.add(rkey)
+    try:
+        offers = await fetch_offers(
+            watch.origin,
+            watch.destination,
+            watch.depart_date,
+            SearchOpts.of(watch.currency, watch.market),
+            ret=watch.return_date,
+        )
+        if not offers or _nav.get(message.chat.id, 0) != drawn:
+            return  # nothing found, or the reader has moved on and this card is no longer on screen
+        text = _watch_card(watch, lang, _live_rows(offers))
+        await _edit(message, text, menu.watch_keyboard(watch, lang))
+    except Exception as e:  # a failed refresh leaves the stored board standing, which is fine
+        log.warning("background refresh failed for %s: %s", rkey, e)
+    finally:
+        _refreshing.discard(rkey)
+
+
+def _spawn_refresh(message: Message, watch: Watch, lang: str) -> None:
+    task = asyncio.create_task(_refresh_board(message, watch, lang, _nav.get(message.chat.id, 0)))
+    _background.add(task)
+    task.add_done_callback(_background.discard)
 
 
 async def _cb_watch_open(callback: CallbackQuery, state: FSMContext) -> None:
@@ -591,9 +662,11 @@ async def _cb_watch_open(callback: CallbackQuery, state: FSMContext) -> None:
     if watch is None:
         await callback.answer(t(pref.lang, "watch_unknown"), show_alert=True)
         return
-    text, markup = await _watch_screen(watch, pref.lang)
+    text, markup, stale = await _watch_screen(watch, pref.lang)
     await _edit(callback.message, text, markup)
     await callback.answer()
+    if stale:
+        _spawn_refresh(callback.message, watch, pref.lang)
 
 
 async def _cb_history(callback: CallbackQuery) -> None:
@@ -650,7 +723,7 @@ async def _cb_watch_search(callback: CallbackQuery) -> None:
     except Exception as e:
         log.exception("watch search failed for %s: %s", watch.pk, e)
         _searching.clear(chat_id)
-        text, markup = await _watch_screen(watch, pref.lang)
+        text, markup, _ = await _watch_screen(watch, pref.lang)
         await _edit(callback.message, f"{t(pref.lang, 'search_failed')}\n\n{text}", markup)
         return
 
@@ -677,7 +750,7 @@ async def _cb_pause(callback: CallbackQuery) -> None:
         s.add(watch)
         await s.commit()
     await callback.answer(t(pref.lang, "watch_resumed" if not watch.paused else "watch_paused"))
-    text, markup = await _watch_screen(watch, pref.lang)
+    text, markup, _ = await _watch_screen(watch, pref.lang)
     await _edit(callback.message, text, markup)
 
 
@@ -734,7 +807,7 @@ async def _cb_set_threshold(callback: CallbackQuery, state: FSMContext) -> None:
         if price
         else t(pref.lang, "thr_cleared")
     )
-    text, markup = await _watch_screen(watch, pref.lang)
+    text, markup, _ = await _watch_screen(watch, pref.lang)
     await _edit(callback.message, text, markup)
 
 

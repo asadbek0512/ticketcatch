@@ -484,3 +484,30 @@ def test_the_poller_leaves_proof_it_is_alive(tmp_path, monkeypatch):
     monkeypatch.setattr(poller, "HEARTBEAT_FILE", beat)
     poller._beat()
     assert beat.exists()
+
+
+def test_a_board_older_than_the_threshold_is_refreshed():
+    """The complaint a price bot dies of is "it said X, the site says Y" — and the cause is almost
+    never a misread, it is a number read eleven hours ago. Old boards still show instantly; they
+    just don't stay old."""
+    from datetime import timezone
+
+    from ticketcatch import bot
+    from ticketcatch.models import PriceQuote, utcnow
+
+    def board(minutes):
+        at = utcnow() - timedelta(minutes=minutes)
+        return [PriceQuote(route_key="ICN-TAS", price=1, currency="krw", captured_at=at)]
+
+    assert not bot._is_stale(board(5))
+    assert bot._is_stale(board(bot._STALE_BOARD_MINUTES + 1))
+    assert not bot._is_stale([])  # nothing captured yet is a different screen, not a stale one
+    # SQLite hands back naive datetimes even though we store aware ones; subtracting must not raise.
+    naive = [PriceQuote(route_key="ICN-TAS", price=1, currency="krw",
+                        captured_at=(utcnow() - timedelta(hours=11)).replace(tzinfo=None))]
+    assert bot._is_stale(naive)
+
+
+def test_the_refresh_hint_exists_in_every_language():
+    for lang in LANGS:
+        assert t(lang, "refreshing")

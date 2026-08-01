@@ -154,6 +154,7 @@ UZ: dict[str, str] = {
     "ago_hour": "{n} soat oldin",
     "ago_day": "{n} kun oldin",
     "checked_at": "🕒 {ago} tekshirilgan:",
+    "refreshing": "🔄 Hozirgi narxlar tekshirilmoqda…",
     "no_prices_yet": (
         "Hali narx yig'ilmagan — birinchi tekshiruvdan keyin shu yerda darhol ko'rinadi.\n"
         "Kutmasangiz, 🔍 bilan hozir qidiring."
@@ -328,6 +329,7 @@ RU: dict[str, str] = {
     "ago_hour": "{n} ч назад",
     "ago_day": "{n} дн назад",
     "checked_at": "🕒 Проверено {ago}:",
+    "refreshing": "🔄 Проверяем актуальные цены…",
     "no_prices_yet": (
         "Цены ещё не собраны — после первой проверки появятся здесь сразу.\n"
         "Не хотите ждать — нажмите 🔍."
@@ -499,6 +501,7 @@ EN: dict[str, str] = {
     "ago_hour": "{n}h ago",
     "ago_day": "{n}d ago",
     "checked_at": "🕒 Checked {ago}:",
+    "refreshing": "🔄 Checking today's prices…",
     "no_prices_yet": (
         "No prices collected yet — after the first check they show up here instantly.\n"
         "If you don't want to wait, press 🔍."
