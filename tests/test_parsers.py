@@ -649,3 +649,28 @@ def test_a_broken_link_is_treated_as_no_link():
     for payload in ("", None, "hello", "ICN-TAS", "ICN-TAS-nope", "ICN-ICN-2030-01-01",
                     f"ICN-TAS-{yesterday}"):
         assert parse_deeplink(payload) is None
+
+
+def test_a_board_priced_in_the_wrong_money_is_thrown_away():
+    """Trip.com has no Uzbek point of sale: uz.trip.com ignores curr=UZS and quotes Polish zloty.
+    Labelling "PLN 897" as 897 so'm would put a number in front of an Uzbek user that is wrong by a
+    factor of thousands, which is worse than showing them one source fewer."""
+    from ticketcatch.sources.tripcom import _renders_currency
+
+    assert _renders_currency("347,500원", "krw")
+    assert _renders_currency("₩347,500", "krw")
+    assert _renders_currency("US$241", "usd")
+    assert _renders_currency("2 191 384 so'm", "uzs")
+
+    assert not _renders_currency("PLN 897", "uzs")
+    assert not _renders_currency("PLN 897", "krw")
+    assert not _renders_currency("347,500원", "usd")
+    assert not _renders_currency("", "krw")
+
+
+def test_an_unknown_currency_is_not_second_guessed():
+    """We only hold marks for the currencies the menu offers. For anything else there is nothing to
+    compare against, and inventing a verdict would drop good prices."""
+    from ticketcatch.sources.tripcom import _renders_currency
+
+    assert _renders_currency("897 zl", "pln")

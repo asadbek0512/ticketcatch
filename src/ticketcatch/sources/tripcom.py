@@ -43,6 +43,9 @@ _EXTRACT = """
   const price = el.querySelector('[data-testid^="flight_price"]');
   return {
     price: price ? price.getAttribute('data-price') : null,
+    // The rendered price, symbol and all. data-price is a bare number, so this is the only place
+    // the board says which money it is quoting — see _renders_currency().
+    price_text: price ? price.textContent.trim() : '',
     // The logo filename is the IATA code — the only carrier identifier on the card that isn't
     // written in the front's own language.
     codes: Array.from(el.querySelectorAll('img.logo-img'))
@@ -105,10 +108,63 @@ async def fetch(
     except BrowserUnavailable as e:  # keep the other sources alive on a host without the browser
         raise SourceError(f"tripcom: {e}") from e
 
+    shown = next((r.get("price_text") or "" for r in rows if r.get("price_text")), "")
+    if shown and not _renders_currency(shown, opts.currency):
+        # The front ignored curr= and priced the board in something else. Trip.com has no Uzbek
+        # point of sale, for instance, and uz.trip.com quietly answers in Polish złoty — labelling
+        # "PLN 897" as 897 so'm is not a small error, it is a number that destroys the whole point
+        # of a price bot. Losing one source is the cheap outcome here.
+        raise SourceError(
+            f"tripcom: asked for {opts.currency.upper()}, board shows {shown!r} — dropping"
+        )
+
     quotes = [q for row in rows if (q := _to_quote(row, url, opts))]
     if not quotes:
         raise SourceError(f"tripcom: 0 offers for {origin}-{destination} {depart.isoformat()}")
     return quotes
+
+
+# What each currency looks like once a rendered price has had its digits taken away. Only the marks
+# Trip.com actually prints — this is a check that the board agrees with us, not a currency library.
+_CURRENCY_MARKS: dict[str, tuple[str, ...]] = {
+    "krw": ("₩", "원", "krw"),
+    "usd": ("$", "usd"),
+    # "so'm" arrives here as "som": the apostrophe is stripped with the digit separators, since
+    # Swiss-style grouping writes 1'234 and we cannot keep one without keeping the other.
+    "uzs": ("uzs", "som", "sum", "сўм", "сум"),
+    "rub": ("₽", "rub", "руб"),
+    "eur": ("€", "eur"),
+    "kzt": ("₸", "kzt"),
+    "try": ("₺", "try", "tl"),
+    "jpy": ("¥", "円", "jpy"),
+    "aed": ("aed", "د.إ"),
+    "gbp": ("£", "gbp"),
+}
+_PRICE_NOISE = re.compile(r"[\d\s,. ']+")
+_ANY_CODE = re.compile(r"[A-Z]{3}")
+
+
+def _renders_currency(price_text: str, currency: str) -> bool:
+    """Does the board's own price label agree with the currency we asked for?
+
+    Strip the number and what remains is the money: "347,500원" leaves 원, "PLN 897" leaves PLN. A
+    match is required, and a three-letter code belonging to someone else is an outright veto — that
+    is what catches a front silently falling back to a currency we never asked about."""
+    mark = _PRICE_NOISE.sub("", price_text).strip()
+    if not mark:
+        return False
+    wanted = _CURRENCY_MARKS.get(currency.lower())
+    if not wanted:  # a currency we hold no marks for: nothing to check it against, so don't guess
+        return True
+    lowered = mark.lower()
+    # A three-letter run is only foreign if it is neither our code nor one of our own spelled-out
+    # marks — "som" is the word so'm, not somebody else's currency code.
+    foreign = {
+        c
+        for c in _ANY_CODE.findall(mark.upper())
+        if c.lower() != currency.lower() and c.lower() not in wanted
+    }
+    return not foreign and any(m in lowered for m in wanted)
 
 
 async def _harvest(page) -> list[dict]:
