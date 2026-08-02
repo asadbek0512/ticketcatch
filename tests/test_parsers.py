@@ -657,7 +657,12 @@ def test_a_board_priced_in_the_wrong_money_is_thrown_away():
     factor of thousands, which is worse than showing them one source fewer."""
     from ticketcatch.sources.tripcom import _renders_currency
 
-    assert _renders_currency("347,500원", "krw")
+    # Every label below was read off the live board on TAS-IST, one market front at a time, so the
+    # guard is measured against what Trip.com really prints rather than what we assume it prints.
+    for shown, currency in (("347,500원", "krw"), ("$241", "usd"), ("18 469 ₽", "rub"),
+                            ("113 602 ₸", "kzt"), ("11.389 TL", "try"), ("AED 815", "aed"),
+                            ("200 €", "eur"), ("37,060円", "jpy")):
+        assert _renders_currency(shown, currency), shown
     assert _renders_currency("₩347,500", "krw")
     assert _renders_currency("US$241", "usd")
     assert _renders_currency("2 191 384 so'm", "uzs")
@@ -674,3 +679,14 @@ def test_an_unknown_currency_is_not_second_guessed():
     from ticketcatch.sources.tripcom import _renders_currency
 
     assert _renders_currency("897 zl", "pln")
+
+
+def test_every_market_front_we_offer_is_a_real_trip_com_host():
+    """gb.trip.com does not exist — the British front is uk.trip.com — and a market whose host never
+    resolves loses the source to a DNS error rather than to a missing flight."""
+    from ticketcatch.money import MARKETS
+    from ticketcatch.sources.tripcom import FRONTS
+
+    fronts = {FRONTS.get(m.code, m.code) for m in MARKETS}
+    assert "gb" not in fronts
+    assert "uk" in fronts

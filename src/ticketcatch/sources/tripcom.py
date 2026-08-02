@@ -14,7 +14,11 @@ SOURCE = "tripcom"
 # ticket is bought from MARKET. On ICN-TAS the .kr front ran ~0.9% under .us and matched what the
 # user sees in their own browser, so the front follows MARKET rather than being pinned to English.
 # The cost is that its airline names come back in the local language — hence _airline() below.
-HOST = "https://{market}.trip.com"
+HOST = "https://{front}.trip.com"
+# Trip.com's subdomain is not always the ISO country code we store the market under: the British
+# front lives at uk.trip.com and gb.trip.com does not resolve at all, which cost GBP users the whole
+# source with a DNS error. Anything not listed here uses the market code as-is.
+FRONTS: dict[str, str] = {"gb": "uk"}
 SEARCH = (
     "{host}/flights/showfarefirst?dcity={origin}&acity={destination}&ddate={depart}"
     "&triptype={triptype}&class=y&quantity=1&locale=en-US&curr={currency}"
@@ -80,7 +84,7 @@ async def fetch(
     """Trip.com's own result board for that route and day, priced for the buyer's market."""
     opts = opts or SearchOpts.of()
     url = (RETURN_SEARCH if ret else SEARCH).format(
-        host=HOST.format(market=opts.market),
+        host=HOST.format(front=FRONTS.get(opts.market, opts.market)),
         origin=origin.lower(),
         destination=destination.lower(),
         depart=depart.isoformat(),
