@@ -546,11 +546,11 @@ async def _recent_routes(pref: Preference) -> tuple[tuple[str, str], ...]:
 
 
 async def _cb_route(callback: CallbackQuery, state: FSMContext) -> None:
-    """A popular route off the first screen: adopt it and price it, in one tap.
+    """Route chosen — now ask the day, and only then search.
 
-    The date is left as whatever the user already had — a returning user keeps their trip, and a new
-    one gets the default lead time. Anything else would mean asking a stranger for a date before
-    showing them a single number, which is the wait that made the old /start screen a dead end."""
+    The date is never assumed. Carrying over whatever date the preference happened to hold meant the
+    bot answered a question nobody asked: a price for some day a month out that the traveller never
+    picked, on a route they had only just chosen. A wrong date makes the price wrong too."""
     await state.clear()
     _, origin, destination = callback.data.split(":", 2)
     if not (airports.is_iata(origin) and airports.is_iata(destination)):
@@ -558,6 +558,26 @@ async def _cb_route(callback: CallbackQuery, state: FSMContext) -> None:
         return
     pref = await _pref(callback)
     pref.origin, pref.destination = origin.upper(), destination.upper()
+    pref.return_date = None  # a fresh route starts one-way; the board offers the return afterwards
+    await _save(pref)
+    await _edit(
+        callback.message,
+        t(pref.lang, "start_when", route=_route(pref)),
+        menu.depart_keyboard(pref.lang),
+    )
+    await callback.answer()
+
+
+async def _cb_when(callback: CallbackQuery, state: FSMContext) -> None:
+    """The day, off the date screen: everything is now chosen by the traveller, so search."""
+    await state.clear()
+    try:
+        depart = datetime.strptime(callback.data.split(":", 1)[1], _DATE_FMT).date()
+    except ValueError:
+        await callback.answer()
+        return
+    pref = await _pref(callback)
+    pref.depart_date = depart
     await _save(pref)
     await _cb_search(callback)
 
@@ -1288,6 +1308,7 @@ def build_dispatcher() -> Dispatcher:
     dp.callback_query.register(_cb_swap, F.data == "swap")
     dp.callback_query.register(_cb_search, F.data == "go")
     dp.callback_query.register(_cb_route, F.data.startswith("route:"))
+    dp.callback_query.register(_cb_when, F.data.startswith("when:"))
     dp.callback_query.register(_cb_from, F.data.startswith("from:"))
     dp.callback_query.register(_cb_to_any, F.data.startswith("toany:"))
     dp.callback_query.register(_cb_home, F.data == "home")

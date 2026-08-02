@@ -163,6 +163,29 @@ def start_keyboard(lang: str, recent: tuple[tuple[str, str], ...] = ()) -> Inlin
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def depart_keyboard(lang: str) -> InlineKeyboardMarkup:
+    """Third screen: the route is known, so ask the one thing that is genuinely theirs — the day.
+
+    Same days as date_keyboard, but these buttons run the search instead of returning to the panel:
+    at this point the traveller has already said everything the search needs."""
+    start = date.today() + timedelta(days=1)
+    buttons = [
+        InlineKeyboardButton(
+            text=day_label(start + timedelta(days=i), lang),
+            callback_data=f"when:{(start + timedelta(days=i)).isoformat()}",
+        )
+        for i in range(DATE_CHOICES)
+    ]
+    rows = _rows(buttons, DATE_COLUMNS)
+    rows.append(
+        [
+            InlineKeyboardButton(text=t(lang, "btn_other_date"), callback_data="manual:depart"),
+            InlineKeyboardButton(text=t(lang, "btn_back_start"), callback_data="home"),
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def destination_keyboard(origin: str, lang: str) -> InlineKeyboardMarkup:
     """Second screen: having said where they are, where are they going?
 

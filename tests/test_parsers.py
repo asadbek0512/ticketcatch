@@ -690,3 +690,20 @@ def test_every_market_front_we_offer_is_a_real_trip_com_host():
     fronts = {FRONTS.get(m.code, m.code) for m in MARKETS}
     assert "gb" not in fronts
     assert "uk" in fronts
+
+
+def test_the_route_screen_asks_for_a_day_before_pricing_anything():
+    """Picking a route used to search straight away, on whatever date the preference happened to
+    hold — a month out, chosen by nobody. The day is the traveller's to give."""
+    from ticketcatch import menu
+
+    codes = [
+        b.callback_data
+        for row in menu.depart_keyboard("uz").inline_keyboard
+        for b in row
+        if b.callback_data.startswith("when:")
+    ]
+    assert len(codes) == menu.DATE_CHOICES
+    days = [date.fromisoformat(c.split(":", 1)[1]) for c in codes]
+    assert days[0] == date.today() + timedelta(days=1)  # never a flight leaving today
+    assert days == sorted(days)
